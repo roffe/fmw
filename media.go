@@ -9,6 +9,7 @@ package fmw
 #include <libavutil/channel_layout.h>
 #include <libavutil/display.h>
 #include <libavutil/hwcontext.h>
+#include <libavutil/imgutils.h>
 #include <libavutil/mastering_display_metadata.h>
 #include <libavutil/pixdesc.h>
 #include <libswresample/swresample.h>
@@ -37,6 +38,8 @@ static int rotation(const AVStream *st) {
 static int to_planes(SwsContext **s, AVFrame *dst, AVFrame *own, const AVFrame *f) {
 	av_frame_unref(dst);
 	int fmt = f->format;
+	if (fmt == AV_PIX_FMT_VULKAN) // one stays_on_gpu kept there
+		return av_frame_ref(dst, f);
 	int nv = fmt == AV_PIX_FMT_NV12 || fmt == AV_PIX_FMT_P010LE;
 	if ((nv || fmt == AV_PIX_FMT_YUV420P || fmt == AV_PIX_FMT_YUVJ420P || fmt == AV_PIX_FMT_YUV420P10LE) &&
 		f->linesize[0] > 0 && f->linesize[1] > 0 && (nv || f->linesize[2] == f->linesize[1]))
@@ -116,9 +119,41 @@ static void use_hw(AVCodecContext *c, AVBufferRef *dev, enum AVPixelFormat fmt) 
 	c->get_format = hw_format;
 }
 
-// download replaces f, a frame in video memory, by a copy in system memory, using tmp.
-static int download(AVFrame *f, AVFrame *tmp) {
-	int ret = av_hwframe_transfer_data(tmp, f, 0);
+// stays_on_gpu reports whether f, a frame in video memory, is one painters
+// copy from there themselves: a Vulkan image of NV12 or P010.
+static int stays_on_gpu(const AVFrame *f) {
+	enum AVPixelFormat sw = ((AVHWFramesContext *)f->hw_frames_ctx->data)->sw_format;
+	return f->format == AV_PIX_FMT_VULKAN && (sw == AV_PIX_FMT_NV12 || sw == AV_PIX_FMT_P010LE);
+}
+
+// download replaces f, a frame in video memory, by a copy in system memory,
+// using tmp. The copies come from *pool, made again when their size changes,
+// as a buffer malloced afresh for every frame fragments the heap by tens of
+// megabytes a minute.
+static int download(AVFrame *f, AVFrame *tmp, AVBufferPool **pool, size_t *pool_size) {
+	tmp->format = ((AVHWFramesContext *)f->hw_frames_ctx->data)->sw_format;
+	tmp->width = f->width;
+	tmp->height = f->height;
+	ptrdiff_t linesize[4];
+	size_t size[4], total = 0;
+	int ret = av_image_fill_linesizes(tmp->linesize, tmp->format, FFALIGN(f->width, 64));
+	for (int i = 0; i < 4; i++)
+		linesize[i] = tmp->linesize[i];
+	if (ret >= 0)
+		ret = av_image_fill_plane_sizes(size, tmp->format, f->height, linesize);
+	for (int i = 0; ret >= 0 && i < 4; i++)
+		total += size[i];
+	if (ret >= 0 && (!*pool || *pool_size != total)) {
+		av_buffer_pool_uninit(pool); // its buffers in use free as they come back
+		*pool = av_buffer_pool_init(total, NULL);
+		*pool_size = total;
+	}
+	if (ret >= 0 && !(tmp->buf[0] = av_buffer_pool_get(*pool)))
+		ret = AVERROR(ENOMEM);
+	for (int i = 0, at = 0; ret >= 0 && i < 4 && size[i]; at += size[i++])
+		tmp->data[i] = tmp->buf[0]->data + at;
+	if (ret >= 0)
+		ret = av_hwframe_transfer_data(tmp, f, 0);
 	if (ret >= 0)
 		ret = av_frame_copy_props(tmp, f);
 	av_frame_unref(f);
@@ -132,6 +167,7 @@ import (
 	"errors"
 	"math"
 	"os"
+	"runtime"
 	"sync"
 	"unsafe"
 
@@ -176,8 +212,11 @@ type track struct {
 	index C.int
 	cc    *C.AVCodecContext
 	frame *C.AVFrame
-	last  *C.AVFrame    // the frame take moved past last
-	hw    *C.AVFrame    // for downloading frames when decoding on the GPU
+	last  *C.AVFrame // the frame take moved past last
+	hw    *C.AVFrame // for downloading frames when decoding on the GPU
+	gpu   bool       // decoding on the device Fyne's painter draws with, whose frames stay there
+	pool  *C.AVBufferPool
+	size  C.size_t      // of the pool's buffers
 	tb    float64       // seconds per timestamp unit
 	queue []*C.AVPacket // read while looking for the other track's
 	ready bool          // frame holds a frame not taken yet
@@ -252,7 +291,13 @@ func (m *media) open(i C.int) *track {
 	t.cc.pkt_timebase = st.time_base
 	t.cc.thread_count = 0 // one per core
 	if st.codecpar.codec_type == C.AVMEDIA_TYPE_VIDEO {
-		t.useHardware(codec)
+		t.cc.thread_count = decodeThreads(int(st.codecpar.width), int(st.codecpar.height))
+		if t.useHardware(codec); t.hw != nil {
+			// the device needs none, and each takes tens of megabytes at 4K
+			// and up; two still have streams the device cannot do decode
+			// on the CPU in time
+			t.cc.thread_count = min(t.cc.thread_count, 2)
+		}
 	}
 	if C.avcodec_open2(t.cc, codec, nil) < 0 {
 		t.free()
@@ -316,12 +361,23 @@ func (m *media) playAudio(n int) bool {
 	return true
 }
 
+// decodeThreads returns how many threads decode a w by h video: one a half
+// megapixel, 2 to 8, as each holds frames of its own. That keeps 4K ahead of
+// playback many times over, and hardware decoders fall back to the CPU for
+// streams their device cannot do.
+func decodeThreads(w, h int) C.int {
+	return C.int(min(max(w*h/500_000, 2), 8, runtime.NumCPU()))
+}
+
 // useHardware has t decode on the first kind of device its decoder knows that
 // this machine has, or on the kind FMW_HWDEC names. AV1 stays on the CPU: its
 // default decoder, dav1d, has no hardware support, and FFmpeg's own one has
 // no CPU fallback.
 func (t *track) useHardware(codec *C.AVCodec) {
 	want := os.Getenv("FMW_HWDEC")
+	if (want == "" || want == "vulkan") && t.useSharedVulkan(codec) {
+		return
+	}
 	for i := C.int(0); want != "none"; i++ {
 		cfg := C.avcodec_get_hw_config(codec, i)
 		if cfg == nil {
@@ -332,11 +388,16 @@ func (t *track) useHardware(codec *C.AVCodec) {
 			continue
 		}
 		if dev := hwDevice(cfg.device_type); dev != nil {
-			C.use_hw(t.cc, dev, cfg.pix_fmt)
-			t.hw = C.av_frame_alloc()
+			t.useDevice(dev, cfg.pix_fmt)
 			return
 		}
 	}
+}
+
+// useDevice has t decode on dev, into frames of format, and download them.
+func (t *track) useDevice(dev *C.AVBufferRef, format C.enum_AVPixelFormat) {
+	C.use_hw(t.cc, dev, format)
+	t.hw = C.av_frame_alloc()
 }
 
 var (
@@ -484,7 +545,11 @@ func (m *media) decode(t *track) bool {
 	for {
 		ret := C.avcodec_receive_frame(t.cc, t.frame)
 		if ret == 0 && t.frame.hw_frames_ctx != nil {
-			ret = C.download(t.frame, t.hw)
+			if t.gpu && C.stays_on_gpu(t.frame) != 0 {
+				waitDecoded(t.frame)
+			} else {
+				ret = C.download(t.frame, t.hw, &t.pool, &t.size)
+			}
 		}
 		if ret != C.eagain {
 			return ret >= 0
@@ -545,6 +610,7 @@ func (t *track) free() {
 	C.av_frame_free(&t.frame)
 	C.av_frame_free(&t.last)
 	C.av_frame_free(&t.hw)
+	C.av_buffer_pool_uninit(&t.pool)
 	C.avcodec_free_context(&t.cc)
 }
 
@@ -581,23 +647,28 @@ func (pic *picture) show(v *canvas.VideoFrame, turn int) {
 		return
 	}
 	w, h := int(f.width), int(f.height)
-	ch := (h + 1) / 2
-	plane := func(i, rows int) []byte {
-		return unsafe.Slice((*byte)(unsafe.Pointer(f.data[i])), int(f.linesize[i])*rows)
-	}
-	v.Width, v.Height, v.Y, v.YStride, v.CStride = w, h, plane(0, h), int(f.linesize[0]), int(f.linesize[1])
-	v.U, v.V, v.UV = nil, nil, nil
-	switch f.format {
-	case C.AV_PIX_FMT_NV12, C.AV_PIX_FMT_P010LE:
-		v.UV = plane(1, ch)
-	default:
-		v.U, v.V = plane(1, ch), plane(2, ch)
-	}
-	switch v.Depth = 8; f.format {
-	case C.AV_PIX_FMT_P010LE:
-		v.Depth = 16 // its 10 bits are the high ones
-	case C.AV_PIX_FMT_YUV420P10LE:
-		v.Depth = 10
+	v.Width, v.Height, v.Image = w, h, nil
+	if f.format == C.AV_PIX_FMT_VULKAN {
+		pic.showImage(v)
+	} else {
+		ch := (h + 1) / 2
+		plane := func(i, rows int) []byte {
+			return unsafe.Slice((*byte)(unsafe.Pointer(f.data[i])), int(f.linesize[i])*rows)
+		}
+		v.Y, v.YStride, v.CStride = plane(0, h), int(f.linesize[0]), int(f.linesize[1])
+		v.U, v.V, v.UV = nil, nil, nil
+		switch f.format {
+		case C.AV_PIX_FMT_NV12, C.AV_PIX_FMT_P010LE:
+			v.UV = plane(1, ch)
+		default:
+			v.U, v.V = plane(1, ch), plane(2, ch)
+		}
+		switch v.Depth = 8; f.format {
+		case C.AV_PIX_FMT_P010LE:
+			v.Depth = 16 // its 10 bits are the high ones
+		case C.AV_PIX_FMT_YUV420P10LE:
+			v.Depth = 10
+		}
 	}
 	switch f.colorspace {
 	case C.AVCOL_SPC_BT709:
