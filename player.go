@@ -503,7 +503,11 @@ func (p *Player) work() {
 		} else if wait, ended := p.advance(s, spare); ended {
 			p.Pause()
 		} else {
+			// shown now, as it is due, not after the wait for the next one,
+			// which would take its place before the screen had it
+			fyne.Do(p.publish)
 			time.Sleep(wait)
+			continue
 		}
 		fyne.Do(p.publish)
 	}
