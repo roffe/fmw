@@ -22,9 +22,9 @@ func TestAddRecent(t *testing.T) {
 }
 
 func TestSortDrop(t *testing.T) {
-	video, subs := sortDrop([]string{"a.srt", "movie.mkv", "other.mp4", "m.idx", "m.sub", "x.SUB"})
-	if want := []string{"a.srt", "m.idx", "x.SUB"}; video != "movie.mkv" || !slices.Equal(subs, want) {
-		t.Errorf("dropped files sorted to %q and %q, want movie.mkv and %q", video, subs, want)
+	files, subs := sortDrop([]string{"a.srt", "movie.mkv", "other.mp4", "m.idx", "m.sub", "x.SUB", "list.m3u"})
+	if want, wantSubs := []string{"movie.mkv", "other.mp4", "list.m3u"}, []string{"a.srt", "m.idx", "x.SUB"}; !slices.Equal(files, want) || !slices.Equal(subs, wantSubs) {
+		t.Errorf("dropped files sorted to %q and %q, want %q and %q", files, subs, want, wantSubs)
 	}
 }
 

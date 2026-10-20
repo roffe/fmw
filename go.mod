@@ -7,6 +7,7 @@ require (
 	github.com/ebitengine/oto/v3 v3.5.1
 	github.com/roffe/browse v0.0.0-20261004104941-eb6d091b1974
 	github.com/roffe/gowgpu v0.0.0-20261020224720-6a81e19418c9
+	golang.org/x/text v0.22.0
 )
 
 require (
@@ -45,7 +46,6 @@ require (
 	golang.org/x/image v0.24.0 // indirect
 	golang.org/x/net v0.35.0 // indirect
 	golang.org/x/sys v0.48.0 // indirect
-	golang.org/x/text v0.22.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 

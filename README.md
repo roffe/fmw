@@ -18,6 +18,7 @@ It plays whatever FFmpeg can open, decodes on the GPU when there is one, and on 
 - Rotation: what phones store in the file, plus whatever you pick in the menu
 - Full screen, with the controls and the window menu hiding when the mouse stops moving
 - MilkDrop visualizations for music, through projectM (Linux, opt in, see [Visualizations](#visualizations))
+- A playlist window: drop files, folders and M3U playlists on it, open and save playlists, old Winamp ones too
 
 ## Controls
 
@@ -36,8 +37,13 @@ Keys are up to the app, the fmw app sets these up (see [cmd/fmw/main.go](cmd/fmw
 | Space | play / pause |
 | Left / Right | 5 seconds back / forward |
 | Alt+Enter | full screen, keypad Enter works too |
+| N / P | next / previous on the playlist |
 
-The app also has File > Open, Open Subtitles and Open Recent with native file dialogs, drag and drop (a video plays, subtitle files get added), remembers the volume and puts the file name in the title.
+The app also has File > Open, Open Subtitles and Open Recent with native file dialogs, drag and drop (one file plays, several go on the playlist, an M3U replaces it, subtitle files get added to what plays), remembers the volume and puts the file name in the title.
+
+File > Playlist opens the playlist window. Drop files, folders or M3U/M3U8 playlists on it to add them, a folder's music and videos in name order, double click or Enter plays one, Delete removes it. It plays through by itself, skipping files that are gone, and it's still there next time you start fmw. Old M3U playlists made on Windows work: they're read as Windows-1252 when they aren't UTF-8, with backslashes in their paths. Playlists are saved as M3U8, with paths relative to the playlist where the files are next to it or below.
+
+File > Settings has hardware decoding and the visualization settings. They take effect right away.
 
 ## Download
 

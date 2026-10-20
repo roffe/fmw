@@ -1,4 +1,4 @@
-// Command fmw plays a video: fmw [file or URL]
+// Command fmw plays videos and music: fmw [file, folder, URL or playlist ...]
 package main
 
 import (
@@ -28,7 +28,7 @@ const (
 
 var (
 	media = []browse.Filter{
-		{Name: "Media", Extensions: []string{"mp4", "m4v", "mkv", "webm", "mov", "avi", "wmv", "flv", "mpg", "mpeg", "ts", "m2ts", "3gp", "ogv", "mp3", "m4a", "flac", "ogg", "opus", "wav"}},
+		{Name: "Media", Extensions: []string{"mp4", "m4v", "mkv", "webm", "mov", "avi", "wmv", "flv", "mpg", "mpeg", "ts", "m2ts", "3gp", "ogv", "mp3", "m4a", "flac", "ogg", "opus", "wav", "m3u", "m3u8"}},
 		{Name: "All files"},
 	}
 	subtitles = []browse.Filter{
@@ -44,6 +44,18 @@ func main() {
 	p := fmw.NewPlayer()
 	p.SetVolume(prefs.FloatWithFallback("volume", 1))
 	a.Lifecycle().SetOnStopped(func() { prefs.SetFloat("volume", p.Volume()) })
+	set := &settings{prefs: prefs, p: p}
+	set.apply()
+	load := func(e entry) error {
+		if err := p.Load(e.Path); err != nil {
+			return err
+		}
+		w.SetTitle(title(e))
+		p.Play()
+		return nil
+	}
+	pl := newPlaylist(a, w, load)
+	p.OnEnded = pl.ended
 
 	recent := fyne.NewMenuItem("Open Recent", nil)
 	recent.ChildMenu = fyne.NewMenu("")
@@ -57,16 +69,22 @@ func main() {
 		recent.Disabled = len(paths) == 0
 	}
 	play = func(path string) {
-		if err := p.Load(path); err != nil {
+		var err error
+		if isPlaylist(path) {
+			if err = pl.open(path); err == nil {
+				pl.playFrom(0)
+			}
+		} else if err = load(entry{Path: path}); err == nil {
+			pl.playingOther()
+		}
+		if err != nil {
 			dialog.ShowError(err, w)
 			return
 		}
-		w.SetTitle(filepath.Base(path))
 		paths := addRecent(prefs.StringList("recent"), path)
 		prefs.SetStringList("recent", paths)
 		listRecent(paths)
 		mainMenu.Refresh()
-		p.Play()
 	}
 
 	open := fyne.NewMenuItem("Open…", func() {
@@ -89,7 +107,11 @@ func main() {
 		about.Show()
 		about.RequestFocus()
 	})
-	mainMenu = fyne.NewMainMenu(fyne.NewMenu("File", open, openSubs, recent), fyne.NewMenu("Help", showAbout))
+	showPlaylist := fyne.NewMenuItem("Playlist", pl.show)
+	showSettings := fyne.NewMenuItem("Settings…", func() { set.show(a) })
+	mainMenu = fyne.NewMainMenu(
+		fyne.NewMenu("File", open, openSubs, recent, fyne.NewMenuItemSeparator(), showPlaylist, showSettings),
+		fyne.NewMenu("Help", showAbout))
 	w.SetMainMenu(mainMenu)
 	for _, enter := range []fyne.KeyName{fyne.KeyReturn, fyne.KeyEnter} { // Enter is the keypad's
 		w.Canvas().AddShortcut(&desktop.CustomShortcut{KeyName: enter, Modifier: fyne.KeyModifierAlt}, func(fyne.Shortcut) {
@@ -104,18 +126,25 @@ func main() {
 			p.Seek(p.CurrentTime() - 5*time.Second)
 		case fyne.KeyRight:
 			p.Seek(p.CurrentTime() + 5*time.Second)
+		case fyne.KeyN:
+			pl.next()
+		case fyne.KeyP:
+			pl.previous()
 		}
 	})
 
+	// one file plays, more and folders go on the playlist
+	openAll := func(paths []string) {
+		switch {
+		case len(paths) == 1 && !isFolder(paths[0]):
+			play(paths[0])
+		case len(paths) > 0:
+			pl.playFrom(pl.add(paths))
+		}
+	}
 	w.SetOnDropped(func(_ fyne.Position, uris []fyne.URI) {
-		paths := make([]string, len(uris))
-		for i, u := range uris {
-			paths[i] = u.Path()
-		}
-		video, subs := sortDrop(paths)
-		if video != "" {
-			play(video)
-		}
+		files, subs := sortDrop(pathsOf(uris))
+		openAll(files)
 		for _, sub := range subs {
 			if err := p.AddSubtitles(sub); err != nil {
 				dialog.ShowError(err, w)
@@ -123,8 +152,8 @@ func main() {
 		}
 	})
 
-	if len(os.Args) > 1 {
-		a.Lifecycle().SetOnStarted(func() { play(os.Args[1]) })
+	if args := os.Args[1:]; len(args) > 0 {
+		a.Lifecycle().SetOnStarted(func() { openAll(args) })
 	}
 	w.SetPadded(false) // the picture goes edge to edge, in full screen too
 	w.SetContent(p)
@@ -176,23 +205,21 @@ func versions(info *debug.BuildInfo) (app, toolkit string) {
 	return app, toolkit
 }
 
-// sortDrop splits dropped files into the first that is not subtitles, to play,
-// and the subtitles, to add to it, leaving out a VobSub .sub dropped with its
-// .idx, which opens through that.
-func sortDrop(paths []string) (video string, subs []string) {
+// sortDrop splits dropped files into those that are not subtitles, to play,
+// and the subtitles, to add to what plays, leaving out a VobSub .sub dropped
+// with its .idx, which opens through that.
+func sortDrop(paths []string) (files, subs []string) {
 	for _, path := range paths {
 		ext := strings.ToLower(filepath.Ext(path))
 		switch {
 		case !slices.Contains(subtitles[0].Extensions, strings.TrimPrefix(ext, ".")):
-			if video == "" {
-				video = path
-			}
+			files = append(files, path)
 		case ext == ".sub" && slices.Contains(paths, strings.TrimSuffix(path, filepath.Ext(path))+".idx"):
 		default:
 			subs = append(subs, path)
 		}
 	}
-	return video, subs
+	return files, subs
 }
 
 // openFile asks for a file with the system's own dialog, or Fyne's where it
