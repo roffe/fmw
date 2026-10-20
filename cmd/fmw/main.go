@@ -5,20 +5,26 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"slices"
 	"strings"
 	"time"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
+	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/driver"
 	"fyne.io/fyne/v2/driver/desktop"
+	"fyne.io/fyne/v2/widget"
 	"github.com/roffe/browse"
 	"github.com/roffe/fmw"
 )
 
-const maxRecent = 10
+const (
+	maxRecent = 10
+	author    = "roffe"
+)
 
 var (
 	media = []browse.Filter{
@@ -32,7 +38,7 @@ var (
 )
 
 func main() {
-	a := app.NewWithID("nu.roffe.fmw")
+	a := app.NewWithID("com.roffe.fmw")
 	prefs := a.Preferences()
 	w := a.NewWindow("fmw")
 	p := fmw.NewPlayer()
@@ -42,6 +48,7 @@ func main() {
 	recent := fyne.NewMenuItem("Open Recent", nil)
 	recent.ChildMenu = fyne.NewMenu("")
 	var play func(path string)
+	var mainMenu *fyne.MainMenu // not w.MainMenu(), which the player takes away in full screen
 	listRecent := func(paths []string) {
 		recent.ChildMenu.Items = nil
 		for _, path := range paths {
@@ -58,7 +65,7 @@ func main() {
 		paths := addRecent(prefs.StringList("recent"), path)
 		prefs.SetStringList("recent", paths)
 		listRecent(paths)
-		w.MainMenu().Refresh()
+		mainMenu.Refresh()
 		p.Play()
 	}
 
@@ -73,7 +80,17 @@ func main() {
 		})
 	})
 	listRecent(prefs.StringList("recent"))
-	w.SetMainMenu(fyne.NewMainMenu(fyne.NewMenu("File", open, openSubs, recent)))
+	var about fyne.Window
+	showAbout := fyne.NewMenuItem("About", func() {
+		if about == nil {
+			about = newAbout(a)
+			about.SetOnClosed(func() { about = nil })
+		}
+		about.Show()
+		about.RequestFocus()
+	})
+	mainMenu = fyne.NewMainMenu(fyne.NewMenu("File", open, openSubs, recent), fyne.NewMenu("Help", showAbout))
+	w.SetMainMenu(mainMenu)
 	for _, enter := range []fyne.KeyName{fyne.KeyReturn, fyne.KeyEnter} { // Enter is the keypad's
 		w.Canvas().AddShortcut(&desktop.CustomShortcut{KeyName: enter, Modifier: fyne.KeyModifierAlt}, func(fyne.Shortcut) {
 			p.ToggleFullScreen()
@@ -109,9 +126,54 @@ func main() {
 	if len(os.Args) > 1 {
 		a.Lifecycle().SetOnStarted(func() { play(os.Args[1]) })
 	}
+	w.SetPadded(false) // the picture goes edge to edge, in full screen too
 	w.SetContent(p)
 	w.Resize(fyne.NewSize(960, 600))
 	w.ShowAndRun()
+}
+
+// newAbout makes a window telling which version of fmw this is, the Fyne it
+// is built with and who wrote it. The version is FyneApp.toml's when the app
+// was built with it, else the one Go took from git.
+func newAbout(a fyne.App) fyne.Window {
+	info, _ := debug.ReadBuildInfo()
+	version, toolkit := versions(info)
+	if m := a.Metadata(); m.ID != "" {
+		version = m.Version
+	}
+	w := a.NewWindow("About fmw")
+	w.SetContent(container.NewVBox(
+		widget.NewLabelWithStyle("fmw", fyne.TextAlignCenter, fyne.TextStyle{Bold: true}),
+		widget.NewForm(
+			widget.NewFormItem("Version", widget.NewLabel(version)),
+			widget.NewFormItem("Fyne", widget.NewLabel(toolkit)),
+			widget.NewFormItem("Author", widget.NewLabel(author)),
+		),
+	))
+	w.CenterOnScreen()
+	return w
+}
+
+// versions returns the version of fmw and of the Fyne it is built with, as
+// the Go toolchain recorded them. Go records none for a module go.work uses
+// from a directory.
+func versions(info *debug.BuildInfo) (app, toolkit string) {
+	if info == nil {
+		return "unknown", "unknown"
+	}
+	app, toolkit = info.Main.Version, "unknown"
+	for _, dep := range info.Deps {
+		switch {
+		case dep.Path != "fyne.io/fyne/v2":
+		case dep.Replace != nil:
+			toolkit = strings.TrimSpace(dep.Replace.Path + " " + dep.Replace.Version)
+		case dep.Version == "(devel)":
+			toolkit = "local copy (go.work)"
+		default:
+			toolkit = dep.Version
+		}
+	}
+	return app, toolkit
 }
 
 // sortDrop splits dropped files into the first that is not subtitles, to play,
