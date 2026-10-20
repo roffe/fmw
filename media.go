@@ -574,7 +574,7 @@ func (pic *picture) free() {
 
 // show points v at pic's planes, which stay put until pic holds another
 // frame. A pic holding nothing leaves v without a picture.
-func (pic *picture) show(v *canvas.VideoFrame) {
+func (pic *picture) show(v *canvas.VideoFrame, turn int) {
 	f := pic.f
 	if f.data[0] == nil {
 		v.Width = 0
@@ -621,5 +621,5 @@ func (pic *picture) show(v *canvas.VideoFrame) {
 	default:
 		v.Transfer = canvas.VideoTransferSDR
 	}
-	v.Aspect, v.Rotation, v.Peak = pic.aspect, pic.rotation, float32(pic.peak)
+	v.Aspect, v.Rotation, v.Peak = pic.aspect, (pic.rotation+turn)%360, float32(pic.peak)
 }

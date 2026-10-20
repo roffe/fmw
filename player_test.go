@@ -10,6 +10,7 @@ import (
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
+	"fyne.io/fyne/v2/driver/desktop"
 	"fyne.io/fyne/v2/test"
 )
 
@@ -126,13 +127,13 @@ func TestMenu(t *testing.T) {
 	}
 
 	m := p.menu()
-	if got, want := labels(m.Items), []string{"Play", "Stop", "", "Full Screen", "Audio", "Subtitles"}; !slices.Equal(got, want) {
+	if got, want := labels(m.Items), []string{"Play", "Stop", "", "Full Screen", "Rotate", "Audio", "Subtitles"}; !slices.Equal(got, want) {
 		t.Fatalf("menu %q, want %q", got, want)
 	}
-	if got, want := labels(m.Items[4].ChildMenu.Items), []string{"*eng (aac mono)", "swe (ac3 mono)"}; p.s.out != nil && !slices.Equal(got, want) {
+	if got, want := labels(m.Items[5].ChildMenu.Items), []string{"*eng (aac mono)", "swe (ac3 mono)"}; p.s.out != nil && !slices.Equal(got, want) {
 		t.Errorf("audio %q, want %q", got, want)
 	}
-	subs := m.Items[5].ChildMenu.Items
+	subs := m.Items[6].ChildMenu.Items
 	if got, want := labels(subs), []string{"Off", "*eng", "swe - Styled"}; !slices.Equal(got, want) {
 		t.Fatalf("subtitles %q, want %q", got, want)
 	}
@@ -140,7 +141,7 @@ func TestMenu(t *testing.T) {
 	subs[2].Action()
 	m.Items[3].Action()
 	m = p.menu()
-	if got, want := labels(m.Items[5].ChildMenu.Items), []string{"Off", "eng", "*swe - Styled"}; !slices.Equal(got, want) {
+	if got, want := labels(m.Items[6].ChildMenu.Items), []string{"Off", "eng", "*swe - Styled"}; !slices.Equal(got, want) {
 		t.Errorf("after choosing swe, subtitles %q", got)
 	}
 	if !w.FullScreen() || !m.Items[3].Checked {
@@ -167,6 +168,15 @@ func TestMenu(t *testing.T) {
 	test.Scroll(w.Canvas(), fyne.NewPos(10, 10), 0, 25) // a notch up, over the picture
 	if v := p.Volume(); v < 0.519 || v > 0.521 {
 		t.Errorf("scrolling a notch up set the volume to %v", v)
+	}
+
+	idle()
+	p.menu().Items[4].ChildMenu.Items[1].Action()
+	p.mu.Lock()
+	turned := p.screen.Rotation
+	p.mu.Unlock()
+	if got := labels(p.menu().Items[4].ChildMenu.Items); turned != 90 || got[1] != "*90° Clockwise" {
+		t.Errorf("rotating clockwise shows the picture at %d°, the menu as %q", turned, got)
 	}
 }
 
@@ -243,5 +253,47 @@ func TestAudioTracks(t *testing.T) {
 	}
 	if _, playing := m.audioTracks(); playing != 1 {
 		t.Errorf("track %d plays", playing)
+	}
+}
+
+// TestControlsRest checks that in full screen the controls and the window's
+// menu hide while the pointer rests on the picture, and come back as it moves.
+func TestControlsRest(t *testing.T) {
+	test.NewTempApp(t)
+	p := NewPlayer()
+	w := test.NewWindow(p)
+	defer w.Close()
+	menu := fyne.NewMainMenu(fyne.NewMenu("File"))
+	w.SetMainMenu(menu)
+	rest := func() { // as the timer would, without waiting for it
+		p.idle.Stop()
+		p.moved = p.moved.Add(-restDelay)
+		p.rest()
+	}
+
+	test.DoubleTap(p)
+	if !w.FullScreen() {
+		t.Fatal("a double tap did not go full screen")
+	}
+	p.MouseMoved(&desktop.MouseEvent{})
+	rest()
+	if p.bar.Visible() || w.MainMenu() != nil {
+		t.Error("resting on the picture left the controls or the menu showing")
+	}
+	p.MouseMoved(&desktop.MouseEvent{})
+	if !p.bar.Visible() || w.MainMenu() != menu {
+		t.Error("moving did not bring the controls and the menu back")
+	}
+	p.MouseOut() // onto the controls
+	rest()
+	if !p.bar.Visible() {
+		t.Error("the controls hid under the pointer")
+	}
+
+	p.MouseIn(&desktop.MouseEvent{})
+	rest()
+	test.DoubleTap(p)
+	if w.FullScreen() || !p.bar.Visible() || w.MainMenu() != menu {
+		t.Error("leaving full screen did not show the controls and the menu")
 	}
 }

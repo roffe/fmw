@@ -20,6 +20,7 @@ import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/driver/desktop"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 	"github.com/ebitengine/oto/v3"
@@ -27,7 +28,9 @@ import (
 
 // Player is a widget that shows a video with play/pause, stop, seek, volume
 // and full screen controls, subtitles, and a menu on the secondary button.
-// Scrolling over it turns the volume up or down.
+// Scrolling over it turns the volume up or down, and a double tap toggles
+// full screen, where the controls and the window's main menu hide while the
+// pointer rests on the picture.
 // Its methods are safe to call from any goroutine.
 type Player struct {
 	widget.BaseWidget
@@ -43,6 +46,13 @@ type Player struct {
 	shownSubs        []*subEvent
 	shownGeometry    [4]float32 // of the picture the subtitles were laid out over
 
+	// Only the main goroutine uses these.
+	bar        fyne.CanvasObject // the controls
+	idle       *time.Timer       // hides them in full screen
+	moved      time.Time         // when the pointer last moved over the picture
+	overScreen bool              // the pointer is on the picture rather than the controls
+	windowMenu *fyne.MainMenu    // the window's, while hidden
+
 	mu      sync.Mutex
 	s       *stream
 	playing bool
@@ -56,6 +66,7 @@ type Player struct {
 	spare   *picture // the work goroutine takes frames into it
 	fresh   bool
 	vol     float64
+	turn    int // degrees the picture turns clockwise past how the video says to show it
 }
 
 // stream is a loaded file and how far its playback got.
@@ -110,12 +121,78 @@ func NewPlayer() *Player {
 // CreateRenderer is a private method to Fyne which links this widget to its renderer.
 func (p *Player) CreateRenderer() fyne.WidgetRenderer {
 	vol := container.NewGridWrap(fyne.NewSize(100, p.volume.MinSize().Height), p.volume)
-	bar := container.NewBorder(nil, nil,
+	p.bar = container.NewBorder(nil, nil,
 		container.NewHBox(p.play, p.stop, p.times),
 		container.NewHBox(widget.NewIcon(theme.VolumeUpIcon()), vol, p.full),
 		p.seek)
 	screen := container.NewStack(canvas.NewRectangle(color.Black), p.screen, p.subs)
-	return widget.NewSimpleRenderer(container.NewBorder(nil, bar, nil, nil, screen))
+	return widget.NewSimpleRenderer(container.NewBorder(nil, p.bar, nil, nil, screen))
+}
+
+// DoubleTapped toggles full screen.
+func (p *Player) DoubleTapped(*fyne.PointEvent) {
+	p.ToggleFullScreen()
+}
+
+// MouseIn shows the controls, as moving over the picture does.
+func (p *Player) MouseIn(*desktop.MouseEvent) {
+	p.overScreen = true
+	p.wake()
+}
+
+// MouseMoved shows the controls, which hide again in full screen once the
+// pointer rests on the picture.
+func (p *Player) MouseMoved(*desktop.MouseEvent) {
+	p.overScreen = true
+	p.wake()
+}
+
+// MouseOut keeps the controls showing, as the pointer went to them or away.
+func (p *Player) MouseOut() {
+	p.overScreen = false
+}
+
+const restDelay = 2 * time.Second
+
+// wake shows the controls and, in full screen, has them hide once the pointer
+// rests for restDelay.
+func (p *Player) wake() {
+	p.moved = time.Now()
+	p.showControls(true)
+	if p.idle != nil {
+		p.idle.Stop()
+	}
+	if w := p.window(); w != nil && w.FullScreen() {
+		p.idle = time.AfterFunc(restDelay, func() { fyne.Do(p.rest) })
+	}
+}
+
+func (p *Player) rest() {
+	if w := p.window(); w != nil && w.FullScreen() && p.overScreen && time.Since(p.moved) >= restDelay {
+		p.showControls(false)
+	}
+}
+
+// showControls shows or hides the controls and the main menu of the window.
+func (p *Player) showControls(show bool) {
+	if p.bar == nil || p.bar.Visible() == show {
+		return
+	}
+	w := p.window()
+	if show {
+		p.bar.Show()
+		if w != nil && p.windowMenu != nil {
+			w.SetMainMenu(p.windowMenu)
+		}
+		p.windowMenu = nil
+	} else {
+		p.bar.Hide()
+		if w != nil {
+			p.windowMenu = w.MainMenu()
+			w.SetMainMenu(nil)
+		}
+	}
+	p.Refresh() // as showing or hiding lays out nothing, and showing draws nothing
 }
 
 // Load opens a file, or a URL that FFmpeg streams, in place of the current one
@@ -146,7 +223,7 @@ func (p *Player) Load(path string) error {
 	if s.out != nil {
 		s.out.SetVolume(p.vol)
 	}
-	p.seekTo = 0
+	p.seekTo, p.turn = 0, 0
 	p.kick()
 	p.mu.Unlock()
 	if old != nil {
@@ -287,6 +364,20 @@ func (p *Player) menu() *fyne.Menu {
 	if w := p.window(); w != nil {
 		full.Checked = w.FullScreen()
 	}
+	p.mu.Lock()
+	turn := p.turn
+	p.mu.Unlock()
+	var turns []*fyne.MenuItem
+	for _, t := range []struct {
+		label string
+		deg   int
+	}{{"None", 0}, {"90° Clockwise", 90}, {"180°", 180}, {"90° Counterclockwise", 270}} {
+		item := fyne.NewMenuItem(t.label, func() { p.rotate(t.deg) })
+		item.Checked = t.deg == turn
+		turns = append(turns, item)
+	}
+	rotate := fyne.NewMenuItem("Rotate", nil)
+	rotate.ChildMenu = fyne.NewMenu("", turns...)
 	off := fyne.NewMenuItem("Off", func() { p.showSubtitles(-1) })
 	items := []*fyne.MenuItem{off}
 	var tracks []*fyne.MenuItem
@@ -314,7 +405,17 @@ func (p *Player) menu() *fyne.Menu {
 	audio.ChildMenu, audio.Disabled = fyne.NewMenu("", tracks...), len(tracks) == 0
 	subs := fyne.NewMenuItem("Subtitles", nil)
 	subs.ChildMenu = fyne.NewMenu("", items...)
-	return fyne.NewMenu("", play, fyne.NewMenuItem("Stop", p.Stop), fyne.NewMenuItemSeparator(), full, audio, subs)
+	return fyne.NewMenu("", play, fyne.NewMenuItem("Stop", p.Stop), fyne.NewMenuItemSeparator(), full, rotate, audio, subs)
+}
+
+// rotate turns the picture deg degrees clockwise past how the video says to
+// show it. Called on the main goroutine.
+func (p *Player) rotate(deg int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.turn = deg
+	p.front.show(p.screen, deg)
+	p.screen.Refresh()
 }
 
 // Scrolled turns the volume up or down, 2% a notch of a mouse wheel.
@@ -533,7 +634,7 @@ func (p *Player) publish() {
 	defer p.mu.Unlock()
 	if p.fresh {
 		p.front, p.back, p.fresh = p.back, p.front, false
-		p.front.show(p.screen)
+		p.front.show(p.screen, p.turn)
 		p.screen.Refresh()
 	} else if p.s != nil && p.s.m.video == nil && p.screen.Width != 0 { // sound only
 		p.screen.Width = 0
@@ -546,6 +647,7 @@ func (p *Player) publish() {
 		} else {
 			p.full.SetIcon(theme.ViewFullScreenIcon())
 		}
+		p.wake() // which in full screen starts the wait to hide the controls
 	}
 	now, dur := p.now(), 0.0
 	if p.s != nil {
