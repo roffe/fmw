@@ -2,7 +2,8 @@ package fmw
 
 import (
 	"image"
-	"math"
+	"os"
+	"path/filepath"
 	"runtime"
 	"slices"
 	"sync"
@@ -18,12 +19,72 @@ const (
 	visualFPS = 60
 	ringSize  = 1 << 18 // bytes of sound kept, 0.68 s
 	feedMax   = 2048 * 8
-
-	// ponytail: every frame is read back from the GPU and uploaded again,
-	// so frames bigger than this are drawn smaller and scaled up; share the
-	// texture with the painter's device to draw them at full size
-	visualPixels = 1920 * 1080
 )
+
+// Visualization is how music without a picture is shown: with MilkDrop
+// presets that projectM draws to the sound, in builds with the projectm tag.
+// The zero value shows them, at 1920 by 1080, 30 seconds each, from the
+// presets that come with fmw or the system's.
+type Visualization struct {
+	// Off shows the album cover, or nothing, in place of presets.
+	Off bool
+
+	// Width and Height are the size presets are drawn at, which is scaled
+	// to cover the player, cut at the sides or the top and bottom where its
+	// shape differs. Changing it starts the preset over.
+	Width, Height int
+
+	// Seconds is how long a preset shows before the next, and HardCuts has
+	// a loud beat cut to the next one sooner.
+	Seconds  float64
+	HardCuts bool
+
+	// Presets is a folder of MilkDrop presets to show, its subfolders too.
+	Presets string
+}
+
+// HasVisualizations reports whether fmw was built with projectM, which draws
+// visualizations.
+func HasVisualizations() bool {
+	return projectM
+}
+
+func (v Visualization) size() (int, int) {
+	if v.Width <= 0 || v.Height <= 0 {
+		return 1920, 1080
+	}
+	return v.Width, v.Height
+}
+
+func (v Visualization) seconds() float64 {
+	if v.Seconds <= 0 {
+		return 30
+	}
+	return v.Seconds
+}
+
+// presetDir returns the folder to show presets from: v's, FMW_PRESETS, the
+// presets folder next to the executable, as the releases have it, or the
+// system's.
+func (v Visualization) presetDir() string {
+	if v.Presets != "" {
+		return v.Presets
+	}
+	if d := os.Getenv("FMW_PRESETS"); d != "" {
+		return d
+	}
+	if exe, err := os.Executable(); err == nil {
+		if d := filepath.Join(filepath.Dir(exe), "presets"); isDir(d) {
+			return d
+		}
+	}
+	return "/usr/share/projectM/presets"
+}
+
+func isDir(path string) bool {
+	st, err := os.Stat(path)
+	return err == nil && st.IsDir()
+}
 
 // visualizer shows MilkDrop presets, by projectM, dancing to music that has
 // no picture. projectM draws on a thread of its own, from the sound oto
@@ -36,12 +97,14 @@ type visualizer struct {
 	failed atomic.Bool
 	once   sync.Once
 
-	mu    sync.Mutex
-	ring  []byte // the sound oto read, at its offset since the last seek mod ringSize
-	w, h  int    // pixels the raster was last drawn at
-	shown *image.RGBA
-	ready *image.RGBA // drawn, for the raster's next draw
-	pool  []*image.RGBA
+	mu      sync.Mutex
+	ring    []byte // the sound oto read, at its offset since the last seek mod ringSize
+	cfg     Visualization
+	changes int // how many times cfg changed
+	w, h    int // pixels the raster was last drawn at
+	shown   *image.RGBA
+	ready   *image.RGBA // drawn, for the raster's next draw
+	pool    []*image.RGBA
 }
 
 func newVisualizer(heard func() (int64, bool)) *visualizer {
@@ -52,6 +115,13 @@ func newVisualizer(heard func() (int64, bool)) *visualizer {
 	v.raster = canvas.NewRaster(v.generate)
 	v.raster.Hide()
 	return v
+}
+
+func (v *visualizer) configure(cfg Visualization) {
+	v.mu.Lock()
+	v.cfg = cfg
+	v.changes++
+	v.mu.Unlock()
 }
 
 // write keeps b, the sound oto read at offset at since the last seek.
@@ -89,7 +159,10 @@ func (v *visualizer) sound(dst []float32, fed, heard int64) ([]float32, int64) {
 // show shows the visualizer over the picture while music plays, which it
 // starts drawing to. Called on the main goroutine.
 func (v *visualizer) show(music bool) {
-	music = music && projectM && !v.failed.Load()
+	v.mu.Lock()
+	off := v.cfg.Off
+	v.mu.Unlock()
+	music = music && projectM && !off && !v.failed.Load()
 	if music != v.raster.Visible() {
 		if music {
 			v.raster.Show()
@@ -116,9 +189,10 @@ func (v *visualizer) next() {
 func (v *visualizer) run() {
 	runtime.LockOSThread() // where projectM's GL context is current
 	var (
-		m   *milkdrop
-		fed int64
-		pcm []float32
+		m       *milkdrop
+		fed     int64
+		pcm     []float32
+		applied = -1
 	)
 	tick := time.NewTicker(time.Second / visualFPS)
 	for range tick.C {
@@ -129,14 +203,16 @@ func (v *visualizer) run() {
 			tick.Reset(time.Second / visualFPS)
 			continue
 		}
-		w, h := v.size()
-		if w == 0 || h == 0 {
+		v.mu.Lock()
+		cfg, changes, vw, vh := v.cfg, v.changes, v.w, v.h
+		v.mu.Unlock()
+		if vw <= 0 || vh <= 0 {
 			continue
 		}
 		var err error
 		if m == nil {
-			m, err = newMilkdrop(w, h)
-		} else if m.w != w || m.h != h {
+			m, err = newMilkdrop(cfg.size())
+		} else if w, h := cfg.size(); changes != applied && (m.w != w || m.h != h) {
 			err = m.resize(w, h)
 		}
 		if err != nil {
@@ -145,28 +221,35 @@ func (v *visualizer) run() {
 			fyne.Do(v.raster.Hide)
 			return
 		}
+		if changes != applied {
+			if err := m.configure(cfg.seconds(), cfg.HardCuts, cfg.presetDir()); err != nil {
+				fyne.LogError("fmw: visualization presets", err)
+			}
+			applied = changes
+		}
 		if v.skip.Swap(false) {
 			m.next()
 		}
 		pcm, fed = v.sound(pcm, fed, heard)
-		img := v.take(w, h)
-		m.draw(pcm, img)
+		crop := cover(m.w, m.h, vw, vh)
+		img := v.take(crop.Dx(), crop.Dy())
+		m.draw(pcm, img, crop)
 		v.put(img)
 		fyne.Do(v.raster.Refresh)
 	}
 }
 
-// size returns the size to draw frames at: the raster's, unless that has
-// more than visualPixels.
-func (v *visualizer) size() (int, int) {
-	v.mu.Lock()
-	w, h := v.w, v.h
-	v.mu.Unlock()
-	if w*h > visualPixels {
-		f := math.Sqrt(visualPixels / float64(w*h))
-		w, h = int(float64(w)*f), int(float64(h)*f)
+// cover returns the middle part of a w by h picture that, scaled, covers a
+// view of vw by vh.
+func cover(w, h, vw, vh int) image.Rectangle {
+	cw, ch := w, h
+	if w*vh > vw*h {
+		cw = max(1, (h*vw+vh/2)/vh)
+	} else {
+		ch = max(1, (w*vh+vw/2)/vw)
 	}
-	return w, h
+	x, y := (w-cw)/2, (h-ch)/2
+	return image.Rect(x, y, x+cw, y+ch)
 }
 
 // take returns an image of w by h pixels the raster does not show.

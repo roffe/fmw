@@ -35,6 +35,22 @@ func TestVisualizerSound(t *testing.T) {
 	}
 }
 
+func TestCover(t *testing.T) {
+	for _, c := range []struct {
+		w, h, vw, vh int
+		want         image.Rectangle
+	}{
+		{1920, 1080, 960, 540, image.Rect(0, 0, 1920, 1080)},
+		{1920, 1080, 1000, 1000, image.Rect(420, 0, 1500, 1080)},
+		{1920, 1080, 2560, 1080, image.Rect(0, 135, 1920, 945)},
+		{1920, 1080, 1, 5000, image.Rect(959, 0, 960, 1080)},
+	} {
+		if got := cover(c.w, c.h, c.vw, c.vh); got != c.want {
+			t.Errorf("cover of %dx%d over %dx%d is %v, want %v", c.w, c.h, c.vw, c.vh, got, c.want)
+		}
+	}
+}
+
 func TestMilkdropDraws(t *testing.T) {
 	if !projectM {
 		t.Skip("built without projectm")
@@ -44,13 +60,17 @@ func TestMilkdropDraws(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	img := image.NewRGBA(image.Rect(0, 0, 320, 180))
+	if err := m.configure(30, false, Visualization{}.presetDir()); err != nil {
+		t.Log(err) // projectM's idle preset draws instead
+	}
+	crop := cover(320, 180, 300, 200)
+	img := image.NewRGBA(image.Rect(0, 0, crop.Dx(), crop.Dy()))
 	pcm := make([]float32, 2*800)
 	for f := range 120 {
 		for i := range pcm {
 			pcm[i] = float32(math.Sin(float64(f*800+i/2) * 2 * math.Pi * 110 / sampleRate))
 		}
-		m.draw(pcm, img)
+		m.draw(pcm, img, crop)
 	}
 	lit := 0
 	for i := 0; i < len(img.Pix); i += 4 {

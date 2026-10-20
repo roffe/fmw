@@ -126,9 +126,11 @@ Music without a picture, or with just the album cover, gets MilkDrop presets dan
 go build -tags wayland,migrated_fynedo,projectm ./cmd/fmw
 ```
 
-It needs libprojectM 4 (`libprojectm` on Arch) and presets, by default from `/usr/share/projectM/presets`, where Arch's `projectm` package puts 4000+ of them. `FMW_PRESETS` points it somewhere else. Right click > Next Visualization cuts to another one, otherwise projectM moves on by itself.
+It needs libprojectM 4 (`libprojectm` on Arch) and presets, by default from `/usr/share/projectM/presets`, where Arch's `projectm` package puts 4000+ of them. Settings or `FMW_PRESETS` point it somewhere else. Right click > Next Visualization cuts to another one, otherwise projectM moves on by itself.
 
-projectM only speaks OpenGL, so it draws in its own headless EGL context and every frame is read back and uploaded to the painter. That's 12% of a core in a 960x600 window and 25% at 1080p, bigger windows get 1080p scaled up. Handing the texture straight to the painter's GPU device is next.
+Presets get drawn at a fixed size, 1920 x 1080 unless you pick another in Settings, and scaled to cover the player, cut at the sides or the top and bottom when the window has another shape. projectM starts a preset over from black whenever the size it draws at changes, so this way resizing the window or going full screen doesn't.
+
+projectM only speaks OpenGL, so it draws in its own headless EGL context and every frame is read back and uploaded to the painter. That's around 25% of a core at 1080p. Handing the texture straight to the painter's GPU device is next.
 
 ## How fast
 

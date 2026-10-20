@@ -61,8 +61,9 @@ static const char *gl_open(int w, int h) {
 	return NULL;
 }
 
-// gl_read reads the w by h picture drawn, opaque, bottom row first.
-static void gl_read(int w, int h, void *dst) {
+// gl_read reads w by h pixels of the picture drawn from x, y up, opaque,
+// bottom row first.
+static void gl_read(int x, int y, int w, int h, void *dst) {
 	glBindFramebuffer(GL_FRAMEBUFFER, 0);
 	glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_TRUE);
 	glClearColor(0, 0, 0, 1);
@@ -70,7 +71,7 @@ static void gl_read(int w, int h, void *dst) {
 	glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
 	glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
 	glPixelStorei(GL_PACK_ALIGNMENT, 4);
-	glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, dst);
+	glReadPixels(x, y, w, h, GL_RGBA, GL_UNSIGNED_BYTE, dst);
 }
 */
 import "C"
@@ -78,19 +79,11 @@ import "C"
 import (
 	"errors"
 	"image"
-	"os"
+	"path/filepath"
 	"unsafe"
 )
 
 const projectM = true
-
-// presetDir is where the MilkDrop presets are, unless FMW_PRESETS says.
-func presetDir() string {
-	if d := os.Getenv("FMW_PRESETS"); d != "" {
-		return d
-	}
-	return "/usr/share/projectM/presets"
-}
 
 // milkdrop is projectM drawing its presets in shuffled order. Only the
 // thread that made it may use it, as its GL context is current there.
@@ -98,6 +91,7 @@ type milkdrop struct {
 	pm   C.projectm_handle
 	pl   C.projectm_playlist_handle
 	w, h int
+	dir  string // the presets are from
 	rows []byte // as GL reads them, bottom up
 }
 
@@ -111,18 +105,36 @@ func newMilkdrop(w, h int) (*milkdrop, error) {
 	if m.pm == nil {
 		return nil, errors.New("projectM needs OpenGL 3.3")
 	}
-	dir := C.CString(presetDir())
-	defer C.free(unsafe.Pointer(dir))
-	C.projectm_set_texture_search_paths(m.pm, &dir, 1)
 	C.projectm_set_window_size(m.pm, C.size_t(w), C.size_t(h))
 	C.projectm_set_fps(m.pm, visualFPS)
 	m.pl = C.projectm_playlist_create(m.pm)
 	C.projectm_playlist_set_shuffle(m.pl, true)
-	if C.projectm_playlist_add_path(m.pl, dir, true, false) == 0 {
-		return nil, errors.New("no presets in " + presetDir() + ", FMW_PRESETS says where they are")
+	return m, nil
+}
+
+// configure shows each preset for seconds, cut short by a loud beat with
+// hardCuts, taking them from dir, and the textures they use from dir and a
+// textures folder next to it.
+func (m *milkdrop) configure(seconds float64, hardCuts bool, dir string) error {
+	C.projectm_set_preset_duration(m.pm, C.double(seconds))
+	C.projectm_set_hard_cut_enabled(m.pm, C.bool(hardCuts))
+	if dir == m.dir {
+		return nil
+	}
+	m.dir = dir
+	paths := []*C.char{C.CString(dir), C.CString(filepath.Join(filepath.Dir(dir), "textures"))}
+	defer func() {
+		for _, p := range paths {
+			C.free(unsafe.Pointer(p))
+		}
+	}()
+	C.projectm_set_texture_search_paths(m.pm, &paths[0], C.size_t(len(paths)))
+	C.projectm_playlist_clear(m.pl)
+	if C.projectm_playlist_add_path(m.pl, paths[0], true, false) == 0 {
+		return errors.New("no presets in " + dir)
 	}
 	m.next()
-	return m, nil
+	return nil
 }
 
 func (m *milkdrop) resize(w, h int) error {
@@ -134,22 +146,23 @@ func (m *milkdrop) resize(w, h int) error {
 	return nil
 }
 
-// draw draws the next frame to the sound in pcm, interleaved stereo, into dst
-// of m's size.
-func (m *milkdrop) draw(pcm []float32, dst *image.RGBA) {
+// draw draws the next frame to the sound in pcm, interleaved stereo, and
+// puts the crop of it into dst, of the crop's size.
+func (m *milkdrop) draw(pcm []float32, dst *image.RGBA, crop image.Rectangle) {
 	for max := int(C.projectm_pcm_get_max_samples()); len(pcm) > 0; {
 		n := min(len(pcm)/2, max)
 		C.projectm_pcm_add_float(m.pm, (*C.float)(&pcm[0]), C.uint(n), C.PROJECTM_STEREO)
 		pcm = pcm[n*2:]
 	}
 	C.projectm_opengl_render_frame(m.pm)
-	stride := m.w * 4
-	if len(m.rows) != stride*m.h {
-		m.rows = make([]byte, stride*m.h)
+	w, h := crop.Dx(), crop.Dy()
+	stride := w * 4
+	if len(m.rows) < stride*h {
+		m.rows = make([]byte, stride*h)
 	}
-	C.gl_read(C.int(m.w), C.int(m.h), unsafe.Pointer(&m.rows[0]))
-	for y := range m.h {
-		copy(dst.Pix[y*dst.Stride:y*dst.Stride+stride], m.rows[(m.h-1-y)*stride:])
+	C.gl_read(C.int(crop.Min.X), C.int(m.h-crop.Max.Y), C.int(w), C.int(h), unsafe.Pointer(&m.rows[0]))
+	for y := range h {
+		copy(dst.Pix[y*dst.Stride:y*dst.Stride+stride], m.rows[(h-1-y)*stride:])
 	}
 }
 
