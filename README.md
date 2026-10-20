@@ -74,7 +74,9 @@ func main() {
 }
 ```
 
-The rest is what you'd expect: `Play`, `Pause`, `TogglePlay`, `Stop`, `Seek`, `CurrentTime`, `Duration`, `Playing`, `SetVolume`, `Volume`, `AddSubtitles` and `ToggleFullScreen`. All of them are safe to call from any goroutine.
+The rest is what you'd expect: `Play`, `Pause`, `TogglePlay`, `Stop`, `Seek`, `CurrentTime`, `Duration`, `Playing`, `SetVolume`, `Volume`, `AddSubtitles` and `ToggleFullScreen`. All of them are safe to call from any goroutine. `OnEnded` gets called when what's loaded has played to the end, that's how the app's playlist moves on.
+
+`SetHardwareDecoding` and `SetVisualization` take what the settings window sets, `HardwareDecoders` lists the kinds of device FFmpeg can decode on and `HasVisualizations` says if fmw was built with projectM.
 
 ## Building
 

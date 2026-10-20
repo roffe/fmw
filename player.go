@@ -35,6 +35,10 @@ import (
 type Player struct {
 	widget.BaseWidget
 
+	// OnEnded is called on the main goroutine when playback reaches the end
+	// of what is loaded, as a playlist moves on to the next file.
+	OnEnded func()
+
 	screen           *canvas.VideoFrame
 	play, stop, full *widget.Button
 	seek, volume     *widget.Slider
@@ -67,7 +71,8 @@ type Player struct {
 	spare   *picture // the work goroutine takes frames into it
 	fresh   bool
 	vol     float64
-	turn    int // degrees the picture turns clockwise past how the video says to show it
+	turn    int    // degrees the picture turns clockwise past how the video says to show it
+	hwdec   string // see SetHardwareDecoding
 }
 
 // stream is a loaded file and how far its playback got.
@@ -202,7 +207,10 @@ func (p *Player) showControls(show bool) {
 // and shows its first frame.
 func (p *Player) Load(path string) error {
 	ctx := audioContext()
-	m, err := openMedia(path, ctx != nil)
+	p.mu.Lock()
+	hwdec := p.hwdec
+	p.mu.Unlock()
+	m, err := openMedia(path, ctx != nil, hwdec)
 	if err != nil {
 		return err
 	}
@@ -445,6 +453,21 @@ func (p *Player) SetVolume(v float64) {
 	})
 }
 
+// SetVisualization sets how music without a picture is shown.
+func (p *Player) SetVisualization(v Visualization) {
+	p.vis.configure(v)
+	fyne.Do(p.publish)
+}
+
+// SetHardwareDecoding picks the kind of device the videos loaded from now on
+// decode on, by FFmpeg's name for it as HardwareDecoders lists them, or none
+// for the CPU. Empty picks the best there is, unless FMW_HWDEC names one.
+func (p *Player) SetHardwareDecoding(kind string) {
+	p.mu.Lock()
+	p.hwdec = kind
+	p.mu.Unlock()
+}
+
 // Volume returns the audio volume, from 0 for silent to 1 for as recorded.
 func (p *Player) Volume() float64 {
 	p.mu.Lock()
@@ -509,6 +532,9 @@ func (p *Player) work() {
 			p.land(s, to, spare)
 		} else if wait, ended := p.advance(s, spare); ended {
 			p.Pause()
+			if p.OnEnded != nil {
+				fyne.Do(p.OnEnded)
+			}
 		} else {
 			// shown now, as it is due, not after the wait for the next one,
 			// which would take its place before the screen had it

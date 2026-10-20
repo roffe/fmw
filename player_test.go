@@ -217,7 +217,7 @@ func TestHDR(t *testing.T) {
 // TestAudioTracks switches test.mkv to its second audio track, an 880Hz tone,
 // and checks that the tone is what decodes from then on.
 func TestAudioTracks(t *testing.T) {
-	m, err := openMedia("testdata/test.mkv", true)
+	m, err := openMedia("testdata/test.mkv", true, "")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -168,6 +168,7 @@ import (
 	"math"
 	"os"
 	"runtime"
+	"slices"
 	"sync"
 	"unsafe"
 
@@ -192,6 +193,7 @@ type media struct {
 	audios []C.int       // the streams audio can play from
 	sws    *C.SwsContext // for frames in formats painters do not draw
 	swr    *C.SwrContext
+	hwdec  string // the kind of device video decodes on, see Player.SetHardwareDecoding
 	pcm    []byte
 	start  float64 // stream time where playback time is zero
 	dur    float64
@@ -226,10 +228,10 @@ type track struct {
 
 // openMedia opens path, which can be anything libavformat reads, with its
 // best video track and, if withAudio, the audio track that goes with it.
-func openMedia(path string, withAudio bool) (*media, error) {
+func openMedia(path string, withAudio bool, hwdec string) (*media, error) {
 	cpath := C.CString(path)
 	defer C.free(unsafe.Pointer(cpath))
-	m := &media{}
+	m := &media{hwdec: hwdec}
 	if ret := C.avformat_open_input(&m.fc, cpath, nil, nil); ret < 0 {
 		return nil, averror(ret)
 	}
@@ -299,7 +301,7 @@ func (m *media) open(i C.int) *track {
 	t.cc.thread_count = 0 // one per core
 	if st.codecpar.codec_type == C.AVMEDIA_TYPE_VIDEO {
 		t.cc.thread_count = decodeThreads(int(st.codecpar.width), int(st.codecpar.height))
-		if t.useHardware(codec); t.hw != nil {
+		if t.useHardware(codec, m.hwdec); t.hw != nil {
 			// the device needs none, and each takes tens of megabytes at 4K
 			// and up; two still have streams the device cannot do decode
 			// on the CPU in time
@@ -376,12 +378,14 @@ func decodeThreads(w, h int) C.int {
 	return C.int(min(max(w*h/500_000, 2), 8, runtime.NumCPU()))
 }
 
-// useHardware has t decode on the first kind of device its decoder knows that
-// this machine has, or on the kind FMW_HWDEC names. AV1 stays on the CPU: its
-// default decoder, dav1d, has no hardware support, and FFmpeg's own one has
-// no CPU fallback.
-func (t *track) useHardware(codec *C.AVCodec) {
-	want := os.Getenv("FMW_HWDEC")
+// useHardware has t decode on the kind of device want names, or FMW_HWDEC
+// when want is empty, or else on the first kind its decoder knows that this
+// machine has. AV1 stays on the CPU: its default decoder, dav1d, has no
+// hardware support, and FFmpeg's own one has no CPU fallback.
+func (t *track) useHardware(codec *C.AVCodec, want string) {
+	if want == "" {
+		want = os.Getenv("FMW_HWDEC")
+	}
 	if (want == "" || want == "vulkan") && t.useSharedVulkan(codec) {
 		return
 	}
@@ -399,6 +403,30 @@ func (t *track) useHardware(codec *C.AVCodec) {
 			return
 		}
 	}
+}
+
+// HardwareDecoders returns FFmpeg's names for the kinds of device its
+// decoders can decode video on, whether the machine has one or not.
+func HardwareDecoders() []string {
+	var names []string
+	var it unsafe.Pointer
+	for c := C.av_codec_iterate(&it); c != nil; c = C.av_codec_iterate(&it) {
+		if C.av_codec_is_decoder(c) == 0 || c._type != C.AVMEDIA_TYPE_VIDEO {
+			continue
+		}
+		for i := C.int(0); ; i++ {
+			cfg := C.avcodec_get_hw_config(c, i)
+			if cfg == nil {
+				break
+			}
+			name := C.GoString(C.av_hwdevice_get_type_name(cfg.device_type))
+			if cfg.methods&C.AV_CODEC_HW_CONFIG_METHOD_HW_DEVICE_CTX != 0 && !slices.Contains(names, name) {
+				names = append(names, name)
+			}
+		}
+	}
+	slices.Sort(names)
+	return names
 }
 
 // useDevice has t decode on dev, into frames of format, and download them.
