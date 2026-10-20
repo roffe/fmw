@@ -38,6 +38,10 @@ Keys are up to the app, the fmw app sets these up (see [cmd/fmw/main.go](cmd/fmw
 
 The app also has File > Open, Open Subtitles and Open Recent with native file dialogs, drag and drop (a video plays, subtitle files get added), remembers the volume and puts the file name in the title.
 
+## Download
+
+Builds are on the [releases](https://github.com/roffe/fmw/releases) page: an AppImage and a tarball for Linux, a zip for Windows. FFmpeg 9.0 comes with them, so there's nothing else to install. The [nightly](https://github.com/roffe/fmw/releases/tag/nightly) gets built from every push to master.
+
 ## Using the widget
 
 ```go
@@ -78,20 +82,16 @@ You need:
 1. Go 1.27
 2. FFmpeg 6.1 or newer with its development files, found through pkg-config (libavformat, libavcodec, libavutil, libswscale, libswresample)
 3. The Vulkan headers on Linux and Windows, for the zero copy path. On Arch that's `vulkan-headers`, on Debian and Ubuntu `libvulkan-dev`. Without them, or with an FFmpeg built without Vulkan, build with `-tags novulkan`
-4. My Fyne fork on the `wgpu` branch, which has the `canvas.VideoFrame` the player draws with and the WebGPU painter, and [gowgpu](https://github.com/roffe/gowgpu) under it. Upstream Fyne doesn't have `VideoFrame`
-
-The `go.work` expects them next to fmw:
+Fyne comes from my fork's `wgpu` branch, go.mod points there. It has the `canvas.VideoFrame` the player draws with and the WebGPU painter, with [gowgpu](https://github.com/roffe/gowgpu) under it. Upstream Fyne doesn't have `VideoFrame`.
 
 ```sh
 git clone https://github.com/roffe/fmw
-git clone -b wgpu https://github.com/roffe/fyne
-git clone https://github.com/roffe/gowgpu
 cd fmw
 go build -tags wayland,migrated_fynedo ./cmd/fmw
 ./fmw movie.mkv
 ```
 
-`wayland` builds GLFW for native Wayland, leave it out on X11. `migrated_fynedo` skips Fyne's thread checks.
+`wayland` builds GLFW for Wayland only. Leave it out and GLFW gets both X11 and Wayland and picks one at start, that's how the releases are built. `migrated_fynedo` skips Fyne's thread checks.
 
 Or build with the fyne tool, which picks up [cmd/fmw/FyneApp.toml](cmd/fmw/FyneApp.toml) and adds `migrated_fynedo` and the icon by itself:
 
@@ -102,6 +102,10 @@ fyne install --tags wayland
 ```
 
 On Wayland the window icon comes from the installed `.desktop` file, so the icon only shows up after `fyne install` (or `fyne package` and `make user-install` in what it makes).
+
+To work on Fyne or gowgpu at the same time, clone them next to fmw and `go work init . ../fyne ../gowgpu`.
+
+`make linux`, `make appimage` and `make windows` build what the releases have, into `dist`. They build against FFmpeg 9.0 from [BtbN's builds](https://github.com/BtbN/FFmpeg-Builds) and bundle it, it gets downloaded to `.tmp` the first time along with the Vulkan headers. `make windows` cross compiles with llvm-mingw's `x86_64-w64-mingw32-clang`, `WINCC` picks another compiler.
 
 ## Hardware decoding
 

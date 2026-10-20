@@ -1,0 +1,75 @@
+name: Build
+
+# Pushes to master replace the nightly release, v* tags make a release
+on:
+  push:
+    branches:
+    - 'master'
+    tags:
+    - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v6.0.2
+
+    - name: Set up Go
+      uses: actions/setup-go@v6.4.0
+      with:
+        go-version-file: go.mod
+        cache: false
+
+    - name: Get dependencies
+      run: |
+        sudo apt-get update && sudo apt-get install gcc libgl1-mesa-dev libegl1-mesa-dev libgles2-mesa-dev libx11-dev xorg-dev libwayland-dev libxkbcommon-dev
+        go install fyne.io/tools/cmd/fyne@latest
+
+    # Windows is cross compiled, with the UCRT like the FFmpeg DLLs
+    - name: Install llvm-mingw
+      run: |
+        curl -fsSL https://github.com/mstorsjo/llvm-mingw/releases/download/20251216/llvm-mingw-20251216-ucrt-ubuntu-22.04-x86_64.tar.xz | tar -xJ -C $RUNNER_TEMP
+        echo "$RUNNER_TEMP/llvm-mingw-20251216-ucrt-ubuntu-22.04-x86_64/bin" >> $GITHUB_PATH
+
+    - name: Build
+      run: make linux appimage windows
+
+    - name: Delete previous nightly release
+      if: github.ref_type == 'branch'
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        GH_REPO: ${{ github.repository }}
+      run: gh release delete nightly --yes --cleanup-tag || true
+
+    - name: Publish nightly release
+      if: github.ref_type == 'branch'
+      uses: softprops/action-gh-release@v3
+      with:
+        tag_name: nightly
+        name: Nightly Build
+        body: Automated build from `${{ github.ref_name }}` at ${{ github.sha }}.
+        prerelease: true
+        make_latest: false
+        target_commitish: ${{ github.sha }}
+        files: |
+          dist/fmw_linux_x64.tar.xz
+          dist/fmw-x86_64.AppImage
+          dist/fmw_windows_x64.zip
+
+    - name: Release
+      if: github.ref_type == 'tag'
+      uses: softprops/action-gh-release@v3
+      with:
+        make_latest: "true"
+        files: |
+          dist/fmw_linux_x64.tar.xz
+          dist/fmw-x86_64.AppImage
+          dist/fmw_windows_x64.zip

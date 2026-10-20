@@ -1,5 +1,3 @@
-fyne.io/fyne/v2 v2.8.2 h1:gYNJj+ZEPd2wF3M8SlF5iL6febpZkZ1csheRFkuEfHU=
-fyne.io/fyne/v2 v2.8.2/go.mod h1:eXHJ/D9Y58UcDw7SkguadCRI64M4flXyjoMn827Q5SI=
 fyne.io/systray v1.12.3-0.20260810170012-af4e8e793ec4 h1:149/+Wa5EsLLXfyj2pdTmvnQf2VIlgCIwSjcCTHYhIo=
 fyne.io/systray v1.12.3-0.20260810170012-af4e8e793ec4/go.mod h1:RVwqP9nYMo7h5zViCBHri2FgjXF7H2cub7MAq4NSoLs=
 github.com/BurntSushi/toml v1.6.0 h1:dRaEfpa2VI55EwlIW72hMRHdWouJeRF7TPYhI+AUQjk=
@@ -38,6 +36,8 @@ github.com/go-text/typesetting-utils v0.0.0-20260419141703-4ffe8874dabc h1:8FGo2
 github.com/go-text/typesetting-utils v0.0.0-20260419141703-4ffe8874dabc/go.mod h1:3/62I4La/HBRX9TcTpBj4eipLiwzf+vhI+7whTc9V7o=
 github.com/godbus/dbus/v5 v5.2.2 h1:TUR3TgtSVDmjiXOgAAyaZbYmIeP3DPkld3jgKGV8mXQ=
 github.com/godbus/dbus/v5 v5.2.2/go.mod h1:3AAv2+hPq5rdnr5txxxRwiGjPXamgoIHgz9FPBfOp3c=
+github.com/gogpu/naga v0.20.3 h1:iklZY6jDXkhDAXMKPehd95Wi/mt4/+h7RGlUN1h15nI=
+github.com/gogpu/naga v0.20.3/go.mod h1:15sQaHKkbqXcwTN+hHYGLsA0WBBnkmYzne/eF5p5WEg=
 github.com/hack-pad/go-indexeddb v0.3.2 h1:DTqeJJYc1usa45Q5r52t01KhvlSN02+Oq+tQbSBI91A=
 github.com/hack-pad/go-indexeddb v0.3.2/go.mod h1:QvfTevpDVlkfomY498LhstjwbPW6QC4VC/lxYb0Kom0=
 github.com/hack-pad/safejs v0.1.0 h1:qPS6vjreAqh2amUqj4WNG1zIw7qlRQJ9K10eDKMCnE8=
@@ -62,6 +62,10 @@ github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZb
 github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
 github.com/roffe/browse v0.0.0-20261004104941-eb6d091b1974 h1:0sTHqcaQMYaRote/EYtlRXixwaCrR7nUkFQqEAioX5A=
 github.com/roffe/browse v0.0.0-20261004104941-eb6d091b1974/go.mod h1:qJAMUtwoSym/Ybjw8xt/iwCm19aAGiJtmSILHm6QHmY=
+github.com/roffe/fyne/v2 v2.0.0-20261020225307-0b60790dce9a h1:wj6GkkQMfcmL2CsKiZuN8KfIK8x/GZvxpNdKhGL7bF0=
+github.com/roffe/fyne/v2 v2.0.0-20261020225307-0b60790dce9a/go.mod h1:Hhi/LMfQ1SW0A/wVbtYUgGUDdqN8lPwAp+Olo4nHEG4=
+github.com/roffe/gowgpu v0.0.0-20261020224720-6a81e19418c9 h1:9h9xn8ham3eNvC+TeuMg0p3oeDlIIeVnCvLeueEL9hk=
+github.com/roffe/gowgpu v0.0.0-20261020224720-6a81e19418c9/go.mod h1:prhckda/6oiVUHHq+eqSpIybpIrn9MjON9Rb1VNFrto=
 github.com/rymdport/portal v0.4.2 h1:7jKRSemwlTyVHHrTGgQg7gmNPJs88xkbKcIL3NlcmSU=
 github.com/rymdport/portal v0.4.2/go.mod h1:kFF4jslnJ8pD5uCi17brj/ODlfIidOxlgUDTO5ncnC4=
 github.com/srwiley/oksvg v0.0.0-20221011165216-be6e8873101c h1:km8GpoQut05eY3GiYWEedbTT0qnSxrCjsVbb7yKY1KE=
