@@ -17,6 +17,7 @@ It plays whatever FFmpeg can open, decodes on the GPU when there is one, and on 
 - Subtitles: embedded text, PGS and DVD tracks, and external SRT, ASS/SSA, WebVTT, PGS `.sup` and VobSub `.idx`/`.sub` files. Subtitle files named like the video, next to it or in a `Subs` folder, load by themselves
 - Rotation: what phones store in the file, plus whatever you pick in the menu
 - Full screen, with the controls and the window menu hiding when the mouse stops moving
+- MilkDrop visualizations for music, through projectM (Linux, opt in, see [Visualizations](#visualizations))
 
 ## Controls
 
@@ -26,7 +27,7 @@ The widget handles the mouse by itself:
 |---|---|
 | Double click | full screen |
 | Mouse wheel | volume, 2% a notch |
-| Right click | menu: play/pause, stop, full screen, rotate, audio track, subtitles |
+| Right click | menu: play/pause, stop, full screen, rotate, audio track, subtitles, next visualization |
 
 Keys are up to the app, the fmw app sets these up (see [cmd/fmw/main.go](cmd/fmw/main.go)):
 
@@ -116,6 +117,18 @@ FMW_HWDEC=none ./fmw movie.mkv    # CPU only
 FMW_HWDEC=cuda ./fmw movie.mkv    # NVDEC, frames copied through RAM
 FMW_HWDEC=vaapi ./fmw movie.mkv
 ```
+
+## Visualizations
+
+Music without a picture, or with just the album cover, gets MilkDrop presets dancing to it through [projectM](https://github.com/projectM-visualizer/projectm). It's opt in and Linux only for now:
+
+```sh
+go build -tags wayland,migrated_fynedo,projectm ./cmd/fmw
+```
+
+It needs libprojectM 4 (`libprojectm` on Arch) and presets, by default from `/usr/share/projectM/presets`, where Arch's `projectm` package puts 4000+ of them. `FMW_PRESETS` points it somewhere else. Right click > Next Visualization cuts to another one, otherwise projectM moves on by itself.
+
+projectM only speaks OpenGL, so it draws in its own headless EGL context and every frame is read back and uploaded to the painter. That's 12% of a core in a 960x600 window and 25% at 1080p, bigger windows get 1080p scaled up. Handing the texture straight to the painter's GPU device is next.
 
 ## How fast
 

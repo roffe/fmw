@@ -74,6 +74,7 @@ func (s *stream) Read(b []byte) (int, error) {
 		n = copy(b[:min(len(b), 1024)], s.pcm)
 		s.pcm = s.pcm[n:]
 	}
+	s.vis.write(s.sent.Load(), b[:n])
 	s.sent.Add(int64(n))
 	return n, nil
 }

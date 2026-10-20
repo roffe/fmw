@@ -187,6 +187,7 @@ type media struct {
 	fc     *C.AVFormatContext // nil once closed
 	pkt    *C.AVPacket
 	video  *track
+	cover  bool // video is a still, such as the album cover of a song
 	audio  *track
 	audios []C.int       // the streams audio can play from
 	sws    *C.SwsContext // for frames in formats painters do not draw
@@ -239,6 +240,7 @@ func openMedia(path string, withAudio bool) (*media, error) {
 	m.pkt = C.av_packet_alloc()
 	if i := C.av_find_best_stream(m.fc, C.AVMEDIA_TYPE_VIDEO, -1, -1, nil, 0); i >= 0 {
 		m.video = m.open(i)
+		m.cover = C.stream(m.fc, i).disposition&C.AV_DISPOSITION_ATTACHED_PIC != 0
 	}
 	if withAudio {
 		related := C.int(-1)
@@ -274,6 +276,11 @@ func openMedia(path string, withAudio bool) (*media, error) {
 		m.rotation = int(C.rotation(st))
 	}
 	return m, nil
+}
+
+// music reports whether m is sound without moving pictures.
+func (m *media) music() bool {
+	return m.video == nil || m.cover
 }
 
 // open opens a decoder for stream i.

@@ -40,6 +40,7 @@ type Player struct {
 	seek, volume     *widget.Slider
 	times            *widget.Label
 	subs             *fyne.Container // over the screen, see subtitleLayout
+	vis              *visualizer
 	subLayout        *subtitleLayout
 	shownPlaying     bool
 	shownFull        bool
@@ -72,7 +73,8 @@ type Player struct {
 // stream is a loaded file and how far its playback got.
 type stream struct {
 	m        *media
-	out      *oto.Player  // nil without sound
+	out      *oto.Player // nil without sound
+	vis      *visualizer
 	sent     atomic.Int64 // bytes oto has read since the last seek
 	start    float64      // stream time of the first of them
 	videoEOF bool
@@ -114,6 +116,7 @@ func NewPlayer() *Player {
 	p.subLayout = &subtitleLayout{p: p, box: canvas.NewRectangle(color.NRGBA{A: 160})}
 	p.subLayout.box.CornerRadius = 4
 	p.subs = container.New(p.subLayout, p.subLayout.box)
+	p.vis = newVisualizer(p.played)
 	p.ExtendBaseWidget(p)
 	return p
 }
@@ -125,7 +128,7 @@ func (p *Player) CreateRenderer() fyne.WidgetRenderer {
 		container.NewHBox(p.play, p.stop, p.times),
 		container.NewHBox(widget.NewIcon(theme.VolumeUpIcon()), vol, p.full),
 		p.seek)
-	screen := container.NewStack(canvas.NewRectangle(color.Black), p.screen, p.subs)
+	screen := container.NewStack(canvas.NewRectangle(color.Black), p.screen, p.vis.raster, p.subs)
 	return widget.NewSimpleRenderer(container.NewBorder(nil, p.bar, nil, nil, screen))
 }
 
@@ -203,7 +206,7 @@ func (p *Player) Load(path string) error {
 	if err != nil {
 		return err
 	}
-	s := &stream{m: m, skipTo: -1}
+	s := &stream{m: m, skipTo: -1, vis: p.vis}
 	if m.audio != nil {
 		s.out = ctx.NewPlayer(s)
 	}
@@ -405,7 +408,11 @@ func (p *Player) menu() *fyne.Menu {
 	audio.ChildMenu, audio.Disabled = fyne.NewMenu("", tracks...), len(tracks) == 0
 	subs := fyne.NewMenuItem("Subtitles", nil)
 	subs.ChildMenu = fyne.NewMenu("", items...)
-	return fyne.NewMenu("", play, fyne.NewMenuItem("Stop", p.Stop), fyne.NewMenuItemSeparator(), full, rotate, audio, subs)
+	menu := fyne.NewMenu("", play, fyne.NewMenuItem("Stop", p.Stop), fyne.NewMenuItemSeparator(), full, rotate, audio, subs)
+	if p.vis.raster.Visible() {
+		menu.Items = append(menu.Items, fyne.NewMenuItem("Next Visualization", p.vis.next))
+	}
+	return menu
 }
 
 // rotate turns the picture deg degrees clockwise past how the video says to
@@ -630,6 +637,18 @@ func (p *Player) position() float64 {
 	return p.pos
 }
 
+// played returns how many bytes of sound since the last seek have come out of
+// the speakers, while music without a picture plays.
+func (p *Player) played() (int64, bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	s := p.s
+	if s == nil || s.out == nil || !p.playing || !s.m.music() {
+		return 0, false
+	}
+	return s.sent.Load() - int64(s.out.BufferedSize()) - int64(deviceBuffer.Seconds()*sampleRate)*8, true
+}
+
 // publish puts the latest frame and the playback state on screen. The work
 // goroutine only takes frames into spare, and the painter only reads front's
 // planes on the main goroutine, so decoding never races with an upload.
@@ -644,6 +663,7 @@ func (p *Player) publish() {
 		p.screen.Width = 0
 		p.screen.Refresh()
 	}
+	p.vis.show(p.s != nil && p.s.m.music())
 	if w := p.window(); w != nil && w.FullScreen() != p.shownFull {
 		p.shownFull = !p.shownFull
 		if p.shownFull {
