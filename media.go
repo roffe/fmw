@@ -9,6 +9,7 @@ package fmw
 #include <libavutil/channel_layout.h>
 #include <libavutil/display.h>
 #include <libavutil/hwcontext.h>
+#include <libavutil/mastering_display_metadata.h>
 #include <libavutil/pixdesc.h>
 #include <libswresample/swresample.h>
 #include <libswscale/swscale.h>
@@ -17,8 +18,8 @@ enum { eagain = AVERROR(EAGAIN) };
 
 static AVStream *stream(AVFormatContext *f, int i) { return f->streams[i]; }
 
-// rotation is how far clockwise, in quarter turns of 90, st has to be turned
-// to show the right way up, as phones record it.
+// rotation is how many degrees clockwise, 0, 90, 180 or 270, st has to be
+// turned to show the right way up, as phones record it.
 static int rotation(const AVStream *st) {
 	const AVPacketSideData *sd = av_packet_side_data_get(st->codecpar->coded_side_data,
 		st->codecpar->nb_coded_side_data, AV_PKT_DATA_DISPLAYMATRIX);
@@ -29,65 +30,60 @@ static int rotation(const AVStream *st) {
 	return (r % 360 + 360) % 360 / 90 * 90;
 }
 
-// rotate turns the w by h pixels at src clockwise by rot degrees into dst.
-static void rotate(const uint32_t *src, int w, int h, uint32_t *dst, int rot) {
-	for (int y = 0; y < h; y++)
-		for (int x = 0; x < w; x++) {
-			uint32_t p = src[y * w + x];
-			if (rot == 90)
-				dst[x * h + h - 1 - y] = p;
-			else if (rot == 180)
-				dst[(h - 1 - y) * w + w - 1 - x] = p;
-			else
-				dst[(w - 1 - x) * h + y] = p;
-		}
-}
-
-// planar returns f as planar 8-bit 4:2:0, converted into mid if it is any other
-// 4:2:0 layout. swscale only goes to RGBA fast from that, and is ten times slower
-// from the NV12 and P010 that hardware decoders hand over.
-static const AVFrame *planar(SwsContext **pre, AVFrame *mid, const AVFrame *f) {
-	const AVPixFmtDescriptor *d = av_pix_fmt_desc_get(f->format);
-	if (f->format == AV_PIX_FMT_YUV420P || f->format == AV_PIX_FMT_YUVJ420P || d->nb_components != 3 ||
-		d->log2_chroma_w != 1 || d->log2_chroma_h != 1 || d->flags & AV_PIX_FMT_FLAG_RGB)
-		return f;
-	*pre = sws_getCachedContext(*pre, f->width, f->height, f->format, f->width, f->height, AV_PIX_FMT_YUV420P, SWS_BILINEAR, NULL, NULL, NULL);
-	if (!*pre)
-		return f;
-	if (mid->width != f->width || mid->height != f->height) {
-		av_frame_unref(mid);
-		mid->format = AV_PIX_FMT_YUV420P;
-		mid->width = f->width;
-		mid->height = f->height;
-		if (av_frame_get_buffer(mid, 0) < 0) {
-			av_frame_unref(mid);
-			return f;
+// to_planes points dst at f's planes when painters draw them as they are, as
+// I420, NV12, yuv420p10 and P010, or else at f converted into own: to one of
+// those with interleaved chroma if f has it, which swscale converts to fastest,
+// and of 10 bits if f has more than 8.
+static int to_planes(SwsContext **s, AVFrame *dst, AVFrame *own, const AVFrame *f) {
+	av_frame_unref(dst);
+	int fmt = f->format;
+	int nv = fmt == AV_PIX_FMT_NV12 || fmt == AV_PIX_FMT_P010LE;
+	if ((nv || fmt == AV_PIX_FMT_YUV420P || fmt == AV_PIX_FMT_YUVJ420P || fmt == AV_PIX_FMT_YUV420P10LE) &&
+		f->linesize[0] > 0 && f->linesize[1] > 0 && (nv || f->linesize[2] == f->linesize[1]))
+		return av_frame_ref(dst, f);
+	const AVPixFmtDescriptor *d = av_pix_fmt_desc_get(fmt);
+	int deep = d->comp[0].depth > 8;
+	int to = deep ? AV_PIX_FMT_YUV420P10LE : AV_PIX_FMT_YUV420P;
+	if (d->nb_components >= 3 && d->comp[1].plane == d->comp[2].plane && !(d->flags & AV_PIX_FMT_FLAG_RGB))
+		to = deep ? AV_PIX_FMT_P010LE : AV_PIX_FMT_NV12;
+	if (own->width != f->width || own->height != f->height || own->format != to) {
+		av_frame_unref(own);
+		own->format = to;
+		own->width = f->width;
+		own->height = f->height;
+		int ret = av_frame_get_buffer(own, 0);
+		if (ret < 0) {
+			av_frame_unref(own);
+			return ret;
 		}
 	}
-	sws_scale(*pre, (const uint8_t *const *)f->data, f->linesize, 0, f->height, mid->data, mid->linesize);
-	mid->colorspace = f->colorspace;
-	mid->color_range = f->color_range;
-	return mid;
+	*s = sws_getCachedContext(*s, f->width, f->height, fmt, f->width, f->height, to, SWS_BILINEAR, NULL, NULL, NULL);
+	if (!*s)
+		return AVERROR(EINVAL);
+	sws_scale(*s, (const uint8_t *const *)f->data, f->linesize, 0, f->height, own->data, own->linesize);
+	own->colorspace = f->colorspace;
+	own->color_range = f->color_range;
+	own->color_trc = f->color_trc;
+	if (d->flags & AV_PIX_FMT_FLAG_RGB) {
+		own->colorspace = AVCOL_SPC_BT470BG; // what swscale encodes RGB with
+		own->color_range = AVCOL_RANGE_MPEG;
+	}
+	return av_frame_ref(dst, own);
 }
 
-// to_rgba scales f into the w by h RGBA pixels at dst, with the colour matrix f
-// is tagged with, or BT.709 for untagged HD and BT.601 below that.
-static void to_rgba(SwsContext **s, SwsContext **pre, AVFrame *mid, const AVFrame *f, uint8_t *dst, int w, int h) {
-	f = planar(pre, mid, f);
-	SwsContext *n = sws_getCachedContext(*s, f->width, f->height, f->format, w, h, AV_PIX_FMT_RGBA, SWS_BILINEAR, NULL, NULL, NULL);
-	if (n && n != *s) {
-		int cs = f->colorspace;
-		if (cs == AVCOL_SPC_UNSPECIFIED)
-			cs = f->height >= 720 ? SWS_CS_ITU709 : SWS_CS_DEFAULT;
-		sws_setColorspaceDetails(n, sws_getCoefficients(cs), f->color_range == AVCOL_RANGE_JPEG,
-			sws_getCoefficients(SWS_CS_DEFAULT), 1, 0, 1 << 16, 1 << 16);
-	}
-	*s = n;
-	if (!n)
-		return;
-	uint8_t *d[4] = {dst};
-	int ls[4] = {w * 4};
-	sws_scale(n, (const uint8_t *const *)f->data, f->linesize, 0, f->height, d, ls);
+// peak returns the brightest light, in cd/m², that f's HDR metadata says the
+// video has: its brightest pixel's, else its mastering display's, else 0. A
+// brightest pixel past the display's peak is a mistake, as discs that say
+// 10000 make.
+static double peak(const AVFrame *f) {
+	double cll = 0, display = 0;
+	const AVFrameSideData *sd = av_frame_get_side_data(f, AV_FRAME_DATA_CONTENT_LIGHT_LEVEL);
+	if (sd)
+		cll = ((const AVContentLightMetadata *)sd->data)->MaxCLL;
+	sd = av_frame_get_side_data(f, AV_FRAME_DATA_MASTERING_DISPLAY_METADATA);
+	if (sd && ((const AVMasteringDisplayMetadata *)sd->data)->has_luminance)
+		display = av_q2d(((const AVMasteringDisplayMetadata *)sd->data)->max_luminance);
+	return cll > 0 && (display <= 0 || cll <= display) ? cll : display;
 }
 
 // pcm_converter makes a converter from what c decodes to interleaved stereo float at rate.
@@ -134,11 +130,12 @@ import "C"
 
 import (
 	"errors"
-	"image"
 	"math"
 	"os"
 	"sync"
 	"unsafe"
+
+	"fyne.io/fyne/v2/canvas"
 )
 
 const noPTS = math.MinInt64 // AV_NOPTS_VALUE
@@ -150,23 +147,28 @@ func init() {
 // media is a file or stream open in libav. Its methods lock it, as the
 // playback loop takes video from it while oto's reads take audio.
 type media struct {
-	mu    sync.Mutex
-	fc    *C.AVFormatContext // nil once closed
-	pkt   *C.AVPacket
-	video *track
-	audio *track
-	sws   *C.SwsContext
-	pre   *C.SwsContext // and its way to planar 4:2:0
-	mid   *C.AVFrame
-	swr   *C.SwrContext
-	pcm   []byte
-	start float64 // stream time where playback time is zero
-	dur   float64
-	w, h  int    // the video's display size
-	sw    int    // and the size it is scaled to before turning,
-	sh    int    // which is the same unless it is on its side
-	rot   C.int  // clockwise degrees to turn it
-	turn  []byte // the scaled frame, when it has to be turned
+	mu     sync.Mutex
+	fc     *C.AVFormatContext // nil once closed
+	pkt    *C.AVPacket
+	video  *track
+	audio  *track
+	audios []C.int       // the streams audio can play from
+	sws    *C.SwsContext // for frames in formats painters do not draw
+	swr    *C.SwrContext
+	pcm    []byte
+	start  float64 // stream time where playback time is zero
+	dur    float64
+
+	// how the video is shown: its width over height when its pixels are not
+	// square, how far to turn it clockwise, and its HDR peak in cd/m², which
+	// the frames that have metadata say
+	aspect   float32
+	rotation int
+	peak     float64
+
+	subMu     sync.Mutex // guards subs, subActive and their events
+	subs      []*subTrack
+	subActive int // the track showing, -1 for none
 }
 
 // track is one stream of a media and its decoder.
@@ -195,17 +197,21 @@ func openMedia(path string, withAudio bool) (*media, error) {
 		m.close()
 		return nil, averror(ret)
 	}
-	m.pkt, m.mid = C.av_packet_alloc(), C.av_frame_alloc()
-	m.video = m.open(C.AVMEDIA_TYPE_VIDEO, -1)
+	m.pkt = C.av_packet_alloc()
+	if i := C.av_find_best_stream(m.fc, C.AVMEDIA_TYPE_VIDEO, -1, -1, nil, 0); i >= 0 {
+		m.video = m.open(i)
+	}
 	if withAudio {
 		related := C.int(-1)
 		if m.video != nil {
 			related = m.video.index
 		}
-		if m.audio = m.open(C.AVMEDIA_TYPE_AUDIO, related); m.audio != nil {
-			if m.swr = C.pcm_converter(m.audio.cc, sampleRate); m.swr == nil {
-				m.audio.free()
-				m.audio = nil
+		if i := C.av_find_best_stream(m.fc, C.AVMEDIA_TYPE_AUDIO, -1, related, nil, 0); i >= 0 {
+			m.audio, m.swr = m.openAudio(i)
+		}
+		for i, st := range unsafe.Slice(m.fc.streams, m.fc.nb_streams) {
+			if st.codecpar.codec_type == C.AVMEDIA_TYPE_AUDIO {
+				m.audios = append(m.audios, C.int(i))
 			}
 		}
 	}
@@ -220,27 +226,24 @@ func openMedia(path string, withAudio bool) (*media, error) {
 	if m.fc.duration != noPTS {
 		m.dur = float64(m.fc.duration) / C.AV_TIME_BASE
 	}
+	m.openSubtitles()
 	if v := m.video; v != nil {
 		st := C.stream(m.fc, v.index)
-		m.sw, m.sh = int(v.cc.width), int(v.cc.height)
-		if sar := C.av_guess_sample_aspect_ratio(m.fc, st, nil); sar.num > 0 && sar.den > 0 {
-			m.sw = m.sw * int(sar.num) / int(sar.den)
+		if sar := C.av_guess_sample_aspect_ratio(m.fc, st, nil); sar.num > 0 && sar.den > 0 && sar.num != sar.den && v.cc.height > 0 {
+			m.aspect = float32(v.cc.width) * float32(sar.num) / float32(sar.den) / float32(v.cc.height)
 		}
-		m.w, m.h, m.rot = m.sw, m.sh, C.rotation(st)
-		if m.rot == 90 || m.rot == 270 {
-			m.w, m.h = m.sh, m.sw
-		}
+		m.rotation = int(C.rotation(st))
 	}
 	return m, nil
 }
 
-func (m *media) open(kind C.enum_AVMediaType, related C.int) *track {
-	var codec *C.AVCodec
-	i := C.av_find_best_stream(m.fc, kind, -1, related, &codec, 0)
-	if i < 0 {
+// open opens a decoder for stream i.
+func (m *media) open(i C.int) *track {
+	st := C.stream(m.fc, i)
+	codec := C.avcodec_find_decoder(st.codecpar.codec_id)
+	if codec == nil {
 		return nil
 	}
-	st := C.stream(m.fc, i)
 	t := &track{index: i, cc: C.avcodec_alloc_context3(codec), frame: C.av_frame_alloc(), last: C.av_frame_alloc(), tb: float64(st.time_base.num) / float64(st.time_base.den)}
 	if C.avcodec_parameters_to_context(t.cc, st.codecpar) < 0 {
 		t.free()
@@ -248,7 +251,7 @@ func (m *media) open(kind C.enum_AVMediaType, related C.int) *track {
 	}
 	t.cc.pkt_timebase = st.time_base
 	t.cc.thread_count = 0 // one per core
-	if kind == C.AVMEDIA_TYPE_VIDEO {
+	if st.codecpar.codec_type == C.AVMEDIA_TYPE_VIDEO {
 		t.useHardware(codec)
 	}
 	if C.avcodec_open2(t.cc, codec, nil) < 0 {
@@ -256,6 +259,61 @@ func (m *media) open(kind C.enum_AVMediaType, related C.int) *track {
 		return nil
 	}
 	return t
+}
+
+// openAudio opens a decoder for audio stream i and a converter from what it
+// decodes, or returns nils.
+func (m *media) openAudio(i C.int) (*track, *C.SwrContext) {
+	t := m.open(i)
+	if t == nil {
+		return nil, nil
+	}
+	swr := C.pcm_converter(t.cc, sampleRate)
+	if swr == nil {
+		t.free()
+		return nil, nil
+	}
+	return t, swr
+}
+
+// audioTracks returns the names of the audio tracks and which one plays, -1 for none.
+func (m *media) audioTracks() ([]string, int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.fc == nil {
+		return nil, -1
+	}
+	names, playing := make([]string, len(m.audios)), -1
+	for n, i := range m.audios {
+		par := C.stream(m.fc, i).codecpar
+		var layout [64]C.char
+		C.av_channel_layout_describe(&par.ch_layout, &layout[0], C.size_t(len(layout)))
+		names[n] = streamName(C.stream(m.fc, i), n+1) + " (" + C.GoString(C.avcodec_get_name(par.codec_id)) + " " + C.GoString(&layout[0]) + ")"
+		if m.audio != nil && m.audio.index == i {
+			playing = n
+		}
+	}
+	return names, playing
+}
+
+// playAudio has audio play from track n, reporting whether it could. Packets
+// read before it switched are gone, so the track is heard after a seek.
+func (m *media) playAudio(n int) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.fc == nil || n < 0 || n >= len(m.audios) {
+		return false
+	}
+	t, swr := m.openAudio(m.audios[n])
+	if t == nil {
+		return false
+	}
+	if m.audio != nil {
+		m.audio.free()
+		C.swr_free(&m.swr)
+	}
+	m.audio, m.swr = t, swr
+	return true
 }
 
 // useHardware has t decode on the first kind of device its decoder knows that
@@ -319,9 +377,8 @@ func (m *media) next() (float64, bool) {
 	return v.t, true
 }
 
-// take moves past the waiting video frame, converting it into dst, which is w
-// by h, unless dst is nil.
-func (m *media) take(dst *image.RGBA) {
+// take moves past the waiting video frame, holding it in dst unless dst is nil.
+func (m *media) take(dst *picture) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.fc == nil || m.video == nil || !m.video.ready {
@@ -332,33 +389,30 @@ func (m *media) take(dst *image.RGBA) {
 	C.av_frame_unref(v.last)
 	C.av_frame_move_ref(v.last, v.frame)
 	if dst != nil {
-		m.convert(dst)
+		m.hold(dst)
 	}
 }
 
-// show converts the frame take moved past last into dst, false if there is
-// none since the last seek.
-func (m *media) show(dst *image.RGBA) bool {
+// show holds the frame take moved past last in dst, false if there is none
+// since the last seek.
+func (m *media) show(dst *picture) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.fc == nil || m.video == nil || m.video.last.data[0] == nil {
 		return false
 	}
-	m.convert(dst)
+	m.hold(dst)
 	return true
 }
 
-func (m *media) convert(dst *image.RGBA) {
-	if m.rot == 0 {
-		C.to_rgba(&m.sws, &m.pre, m.mid, m.video.last, (*C.uint8_t)(&dst.Pix[0]), C.int(m.w), C.int(m.h))
-		return
+func (m *media) hold(dst *picture) {
+	if C.to_planes(&m.sws, dst.f, dst.own, m.video.last) < 0 {
+		C.av_frame_unref(dst.f)
 	}
-	if len(m.turn) < m.sw*m.sh*4 {
-		m.turn = make([]byte, m.sw*m.sh*4)
+	if p := float64(C.peak(m.video.last)); p > 0 {
+		m.peak = p
 	}
-	if C.to_rgba(&m.sws, &m.pre, m.mid, m.video.last, (*C.uint8_t)(&m.turn[0]), C.int(m.sw), C.int(m.sh)); m.sws != nil {
-		C.rotate((*C.uint32_t)(unsafe.Pointer(&m.turn[0])), C.int(m.sw), C.int(m.sh), (*C.uint32_t)(unsafe.Pointer(&dst.Pix[0])), m.rot)
-	}
+	dst.aspect, dst.rotation, dst.peak = m.aspect, m.rotation, m.peak
 }
 
 // samples returns the next stretch of audio as interleaved stereo float32 at
@@ -404,6 +458,7 @@ func (m *media) seek(t float64) {
 	if m.swr != nil {
 		C.swr_init(m.swr)
 	}
+	m.seekSubtitles()
 }
 
 func (m *media) close() {
@@ -419,9 +474,8 @@ func (m *media) close() {
 	}
 	C.av_packet_free(&m.pkt)
 	C.sws_freeContext(m.sws)
-	C.sws_freeContext(m.pre)
-	C.av_frame_free(&m.mid)
 	C.swr_free(&m.swr)
+	m.closeSubtitles()
 	C.avformat_close_input(&m.fc)
 }
 
@@ -457,6 +511,7 @@ func (m *media) packet(t *track) *C.AVPacket {
 			}
 		}
 		if to == nil {
+			m.subtitlePacket(m.pkt)
 			C.av_packet_unref(m.pkt)
 			continue
 		}
@@ -497,4 +552,74 @@ func averror(ret C.int) error {
 	var buf [C.AV_ERROR_MAX_STRING_SIZE]C.char
 	C.av_strerror(ret, &buf[0], C.size_t(len(buf)))
 	return errors.New("fmw: " + C.GoString(&buf[0]))
+}
+
+// picture is a decoded frame kept for the screen: a reference to the decoder's
+// planes, or to own when they had to be converted, and how it is shown.
+type picture struct {
+	f, own   *C.AVFrame
+	aspect   float32
+	rotation int
+	peak     float64
+}
+
+func newPicture() *picture {
+	return &picture{f: C.av_frame_alloc(), own: C.av_frame_alloc()}
+}
+
+func (pic *picture) free() {
+	C.av_frame_free(&pic.f)
+	C.av_frame_free(&pic.own)
+}
+
+// show points v at pic's planes, which stay put until pic holds another
+// frame. A pic holding nothing leaves v without a picture.
+func (pic *picture) show(v *canvas.VideoFrame) {
+	f := pic.f
+	if f.data[0] == nil {
+		v.Width = 0
+		return
+	}
+	w, h := int(f.width), int(f.height)
+	ch := (h + 1) / 2
+	plane := func(i, rows int) []byte {
+		return unsafe.Slice((*byte)(unsafe.Pointer(f.data[i])), int(f.linesize[i])*rows)
+	}
+	v.Width, v.Height, v.Y, v.YStride, v.CStride = w, h, plane(0, h), int(f.linesize[0]), int(f.linesize[1])
+	v.U, v.V, v.UV = nil, nil, nil
+	switch f.format {
+	case C.AV_PIX_FMT_NV12, C.AV_PIX_FMT_P010LE:
+		v.UV = plane(1, ch)
+	default:
+		v.U, v.V = plane(1, ch), plane(2, ch)
+	}
+	switch v.Depth = 8; f.format {
+	case C.AV_PIX_FMT_P010LE:
+		v.Depth = 16 // its 10 bits are the high ones
+	case C.AV_PIX_FMT_YUV420P10LE:
+		v.Depth = 10
+	}
+	switch f.colorspace {
+	case C.AVCOL_SPC_BT709:
+		v.ColorSpace = canvas.VideoColorSpaceBT709
+	case C.AVCOL_SPC_BT2020_NCL, C.AVCOL_SPC_BT2020_CL:
+		v.ColorSpace = canvas.VideoColorSpaceBT2020
+	case C.AVCOL_SPC_UNSPECIFIED:
+		v.ColorSpace = canvas.VideoColorSpaceBT601
+		if h >= 720 {
+			v.ColorSpace = canvas.VideoColorSpaceBT709
+		}
+	default:
+		v.ColorSpace = canvas.VideoColorSpaceBT601
+	}
+	v.FullRange = f.color_range == C.AVCOL_RANGE_JPEG || f.format == C.AV_PIX_FMT_YUVJ420P
+	switch f.color_trc {
+	case C.AVCOL_TRC_SMPTE2084:
+		v.Transfer = canvas.VideoTransferPQ
+	case C.AVCOL_TRC_ARIB_STD_B67:
+		v.Transfer = canvas.VideoTransferHLG
+	default:
+		v.Transfer = canvas.VideoTransferSDR
+	}
+	v.Aspect, v.Rotation, v.Peak = pic.aspect, pic.rotation, float32(pic.peak)
 }

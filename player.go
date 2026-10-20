@@ -8,8 +8,8 @@
 package fmw
 
 import (
+	"errors"
 	"fmt"
-	"image"
 	"image/color"
 	"io"
 	"runtime"
@@ -25,16 +25,23 @@ import (
 	"github.com/ebitengine/oto/v3"
 )
 
-// Player is a widget that shows a video with play/pause, stop, seek and volume
-// controls. Its methods are safe to call from any goroutine.
+// Player is a widget that shows a video with play/pause, stop, seek, volume
+// and full screen controls, subtitles, and a menu on the secondary button.
+// Scrolling over it turns the volume up or down.
+// Its methods are safe to call from any goroutine.
 type Player struct {
 	widget.BaseWidget
 
-	screen       *canvas.Image
-	play, stop   *widget.Button
-	seek, volume *widget.Slider
-	times        *widget.Label
-	shownPlaying bool
+	screen           *canvas.VideoFrame
+	play, stop, full *widget.Button
+	seek, volume     *widget.Slider
+	times            *widget.Label
+	subs             *fyne.Container // over the screen, see subtitleLayout
+	subLayout        *subtitleLayout
+	shownPlaying     bool
+	shownFull        bool
+	shownSubs        []*subEvent
+	shownGeometry    [4]float32 // of the picture the subtitles were laid out over
 
 	mu      sync.Mutex
 	s       *stream
@@ -43,10 +50,10 @@ type Player struct {
 	busy    bool    // the work goroutine runs
 	pos     float64 // the playback clock as of at
 	at      time.Time
-	heard   float64     // the audio clock when position last read it
-	front   *image.RGBA // on screen
-	back    *image.RGBA // next on screen, when fresh
-	spare   *image.RGBA // the work goroutine draws here
+	heard   float64  // the audio clock when position last read it
+	front   *picture // on screen
+	back    *picture // next on screen, when fresh
+	spare   *picture // the work goroutine takes frames into it
 	fresh   bool
 	vol     float64
 }
@@ -69,8 +76,14 @@ type stream struct {
 // NewPlayer returns a Player with nothing loaded.
 func NewPlayer() *Player {
 	p := &Player{vol: 1, seekTo: -1}
-	p.screen = &canvas.Image{FillMode: canvas.ImageFillContain, ScaleMode: canvas.ImageScaleFastest}
-	p.play = widget.NewButtonWithIcon("", theme.MediaPlayIcon(), p.toggle)
+	p.screen = &canvas.VideoFrame{FillMode: canvas.ImageFillContain}
+	p.front, p.back, p.spare = newPicture(), newPicture(), newPicture()
+	runtime.AddCleanup(p, func(pics [3]*picture) {
+		for _, pic := range pics {
+			pic.free()
+		}
+	}, [3]*picture{p.front, p.back, p.spare})
+	p.play = widget.NewButtonWithIcon("", theme.MediaPlayIcon(), p.TogglePlay)
 	p.stop = widget.NewButtonWithIcon("", theme.MediaStopIcon(), p.Stop)
 	p.seek = widget.NewSlider(0, 1)
 	p.seek.Step = 0
@@ -79,7 +92,17 @@ func NewPlayer() *Player {
 	p.volume.Step = 0
 	p.volume.Value = 1
 	p.volume.OnChanged = p.SetVolume
+	unfocus := func(float64) { // so keys such as Space reach the window, the sliders do nothing with them
+		if c := fyne.CurrentApp().Driver().CanvasForObject(p); c != nil {
+			c.Unfocus()
+		}
+	}
+	p.seek.OnChangeEnded, p.volume.OnChangeEnded = unfocus, unfocus
 	p.times = widget.NewLabelWithStyle("0:00 / 0:00", fyne.TextAlignLeading, fyne.TextStyle{Monospace: true})
+	p.full = widget.NewButtonWithIcon("", theme.ViewFullScreenIcon(), p.ToggleFullScreen)
+	p.subLayout = &subtitleLayout{p: p, box: canvas.NewRectangle(color.NRGBA{A: 160})}
+	p.subLayout.box.CornerRadius = 4
+	p.subs = container.New(p.subLayout, p.subLayout.box)
 	p.ExtendBaseWidget(p)
 	return p
 }
@@ -89,9 +112,9 @@ func (p *Player) CreateRenderer() fyne.WidgetRenderer {
 	vol := container.NewGridWrap(fyne.NewSize(100, p.volume.MinSize().Height), p.volume)
 	bar := container.NewBorder(nil, nil,
 		container.NewHBox(p.play, p.stop, p.times),
-		container.NewHBox(widget.NewIcon(theme.VolumeUpIcon()), vol),
+		container.NewHBox(widget.NewIcon(theme.VolumeUpIcon()), vol, p.full),
 		p.seek)
-	screen := container.NewStack(canvas.NewRectangle(color.Black), p.screen)
+	screen := container.NewStack(canvas.NewRectangle(color.Black), p.screen, p.subs)
 	return widget.NewSimpleRenderer(container.NewBorder(nil, bar, nil, nil, screen))
 }
 
@@ -107,6 +130,13 @@ func (p *Player) Load(path string) error {
 	if m.audio != nil {
 		s.out = ctx.NewPlayer(s)
 	}
+	shown := false
+	for _, sub := range sidecars(path) {
+		if n, err := m.addSubtitles(sub); err == nil && !shown {
+			m.showSubtitles(n) // put next to the video, so wanted
+			shown = true
+		}
+	}
 	runtime.AddCleanup(s, (*media).close, m)
 
 	p.Pause()
@@ -115,11 +145,6 @@ func (p *Player) Load(path string) error {
 	p.s = s
 	if s.out != nil {
 		s.out.SetVolume(p.vol)
-	}
-	p.front, p.back, p.spare = nil, nil, nil
-	if m.video != nil {
-		r := image.Rect(0, 0, m.w, m.h)
-		p.front, p.back, p.spare = image.NewRGBA(r), image.NewRGBA(r), image.NewRGBA(r)
 	}
 	p.seekTo = 0
 	p.kick()
@@ -187,6 +212,117 @@ func (p *Player) Seek(t time.Duration) {
 	fyne.Do(p.publish)
 }
 
+// AddSubtitles reads a subtitle file, such as SRT, ASS or WebVTT, for the
+// video loaded and shows it.
+func (p *Player) AddSubtitles(path string) error {
+	p.mu.Lock()
+	s := p.s
+	p.mu.Unlock()
+	if s == nil {
+		return errors.New("fmw: no video to add subtitles to")
+	}
+	i, err := s.m.addSubtitles(path)
+	if err != nil {
+		return err
+	}
+	p.showSubtitles(i)
+	return nil
+}
+
+// playAudio switches to audio track i, from where playback is.
+func (p *Player) playAudio(i int) {
+	p.mu.Lock()
+	s := p.s
+	p.mu.Unlock()
+	if s != nil && s.out != nil && s.m.playAudio(i) {
+		p.Seek(p.CurrentTime())
+	}
+}
+
+func (p *Player) showSubtitles(i int) {
+	p.mu.Lock()
+	if p.s != nil {
+		p.s.m.showSubtitles(i)
+	}
+	p.mu.Unlock()
+	fyne.Do(p.publish)
+}
+
+// ToggleFullScreen puts the window showing the player in full screen, or
+// back from it.
+func (p *Player) ToggleFullScreen() {
+	fyne.Do(func() {
+		if w := p.window(); w != nil {
+			w.SetFullScreen(!w.FullScreen())
+			p.publish()
+		}
+	})
+}
+
+// window returns the window showing the player, or nil.
+func (p *Player) window() fyne.Window {
+	c := fyne.CurrentApp().Driver().CanvasForObject(p)
+	for _, w := range fyne.CurrentApp().Driver().AllWindows() {
+		if w.Canvas() == c {
+			return w
+		}
+	}
+	return nil
+}
+
+// TappedSecondary shows the player's menu.
+func (p *Player) TappedSecondary(ev *fyne.PointEvent) {
+	if c := fyne.CurrentApp().Driver().CanvasForObject(p); c != nil {
+		widget.ShowPopUpMenuAtPosition(p.menu(), c, ev.AbsolutePosition)
+	}
+}
+
+// menu is the player's menu, for things as they are now.
+func (p *Player) menu() *fyne.Menu {
+	play := fyne.NewMenuItem("Play", p.Play)
+	if p.Playing() {
+		play = fyne.NewMenuItem("Pause", p.Pause)
+	}
+	full := fyne.NewMenuItem("Full Screen", p.ToggleFullScreen)
+	if w := p.window(); w != nil {
+		full.Checked = w.FullScreen()
+	}
+	off := fyne.NewMenuItem("Off", func() { p.showSubtitles(-1) })
+	items := []*fyne.MenuItem{off}
+	var tracks []*fyne.MenuItem
+	p.mu.Lock()
+	s := p.s
+	p.mu.Unlock()
+	if s != nil {
+		names, showing := s.m.subtitles()
+		off.Checked = showing < 0
+		for i, name := range names {
+			item := fyne.NewMenuItem(name, func() { p.showSubtitles(i) })
+			item.Checked = i == showing
+			items = append(items, item)
+		}
+		if s.out != nil {
+			names, playing := s.m.audioTracks()
+			for i, name := range names {
+				item := fyne.NewMenuItem(name, func() { p.playAudio(i) })
+				item.Checked = i == playing
+				tracks = append(tracks, item)
+			}
+		}
+	}
+	audio := fyne.NewMenuItem("Audio", nil)
+	audio.ChildMenu, audio.Disabled = fyne.NewMenu("", tracks...), len(tracks) == 0
+	subs := fyne.NewMenuItem("Subtitles", nil)
+	subs.ChildMenu = fyne.NewMenu("", items...)
+	return fyne.NewMenu("", play, fyne.NewMenuItem("Stop", p.Stop), fyne.NewMenuItemSeparator(), full, audio, subs)
+}
+
+// Scrolled turns the volume up or down, 2% a notch of a mouse wheel.
+func (p *Player) Scrolled(ev *fyne.ScrollEvent) {
+	const notch = 25 // what fyne scrolls a notch on Linux and Windows
+	p.SetVolume(min(max(p.Volume()+float64(ev.Scrolled.DY)/notch*0.02, 0), 1))
+}
+
 // SetVolume sets the audio volume, from 0 for silent to 1 for as recorded.
 func (p *Player) SetVolume(v float64) {
 	p.mu.Lock()
@@ -199,6 +335,13 @@ func (p *Player) SetVolume(v float64) {
 		p.volume.Value = v
 		p.volume.Refresh()
 	})
+}
+
+// Volume returns the audio volume, from 0 for silent to 1 for as recorded.
+func (p *Player) Volume() float64 {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.vol
 }
 
 // CurrentTime returns how far into the video playback is.
@@ -225,7 +368,8 @@ func (p *Player) Playing() bool {
 	return p.playing
 }
 
-func (p *Player) toggle() {
+// TogglePlay pauses the video if it is playing and plays it otherwise.
+func (p *Player) TogglePlay() {
 	if p.Playing() {
 		p.Pause()
 	} else {
@@ -266,7 +410,7 @@ func (p *Player) work() {
 
 // land seeks s to the frame showing at t, or to wherever it got when a newer
 // seek comes in.
-func (p *Player) land(s *stream, t float64, spare *image.RGBA) {
+func (p *Player) land(s *stream, t float64, spare *picture) {
 	if s.out != nil {
 		s.out.PauseAndStopReading()
 		_, _ = s.out.Seek(0, io.SeekStart) // drops what oto buffered
@@ -320,7 +464,7 @@ func (p *Player) superseded(t float64) bool {
 
 // advance shows the frames that are due and returns how long until the next
 // one, or that the video and its sound have run out.
-func (p *Player) advance(s *stream, spare *image.RGBA) (time.Duration, bool) {
+func (p *Player) advance(s *stream, spare *picture) (time.Duration, bool) {
 	p.mu.Lock()
 	now, videoEOF := p.position(), s.videoEOF
 	p.mu.Unlock()
@@ -382,23 +526,26 @@ func (p *Player) position() float64 {
 }
 
 // publish puts the latest frame and the playback state on screen. The work
-// goroutine only draws into spare, and the painter only reads front on the
-// main goroutine, so decoding never races with an upload.
+// goroutine only takes frames into spare, and the painter only reads front's
+// planes on the main goroutine, so decoding never races with an upload.
 func (p *Player) publish() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.fresh {
 		p.front, p.back, p.fresh = p.back, p.front, false
-		resized := p.screen.Image == nil || p.screen.Image.Bounds() != p.front.Bounds()
-		p.screen.Image = p.front
-		if resized {
-			p.screen.Refresh()
-		} else {
-			p.screen.RefreshRegion(p.front.Rect)
-		}
-	} else if p.front == nil && p.screen.Image != nil { // sound only
-		p.screen.Image = nil
+		p.front.show(p.screen)
 		p.screen.Refresh()
+	} else if p.s != nil && p.s.m.video == nil && p.screen.Width != 0 { // sound only
+		p.screen.Width = 0
+		p.screen.Refresh()
+	}
+	if w := p.window(); w != nil && w.FullScreen() != p.shownFull {
+		p.shownFull = !p.shownFull
+		if p.shownFull {
+			p.full.SetIcon(theme.ViewRestoreIcon())
+		} else {
+			p.full.SetIcon(theme.ViewFullScreenIcon())
+		}
 	}
 	now, dur := p.now(), 0.0
 	if p.s != nil {
@@ -412,6 +559,7 @@ func (p *Player) publish() {
 			p.play.SetIcon(theme.MediaPlayIcon())
 		}
 	}
+	p.updateSubtitles(now)
 	p.seek.Max, p.seek.Value = max(dur, 1), now
 	p.seek.Refresh()
 	if t := clock(now) + " / " + clock(dur); t != p.times.Text {
