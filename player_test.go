@@ -3,7 +3,9 @@ package fmw
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"math"
+	"net"
 	"slices"
 	"testing"
 	"time"
@@ -217,7 +219,7 @@ func TestHDR(t *testing.T) {
 // TestAudioTracks switches test.mkv to its second audio track, an 880Hz tone,
 // and checks that the tone is what decodes from then on.
 func TestAudioTracks(t *testing.T) {
-	m, err := openMedia("testdata/test.mkv", true, "")
+	m, err := openMedia("testdata/test.mkv", true, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -295,5 +297,46 @@ func TestControlsRest(t *testing.T) {
 	test.DoubleTap(p)
 	if w.FullScreen() || !p.bar.Visible() || w.MainMenu() != menu {
 		t.Error("leaving full screen did not show the controls and the menu")
+	}
+}
+
+// TestLoadReplaced checks that a later Load interrupts one waiting for a
+// stream's server, and wins.
+func TestLoadReplaced(t *testing.T) {
+	test.NewTempApp(t)
+	p := NewPlayer()
+	w := test.NewWindow(p)
+	defer w.Close()
+	server, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+	go func() { // takes connections and never answers
+		for {
+			c, err := server.Accept()
+			if err != nil {
+				return
+			}
+			defer c.Close()
+		}
+	}()
+
+	stream := make(chan error, 1)
+	go func() { stream <- p.Load("http://" + server.Addr().String() + "/radio.mp3") }()
+	time.Sleep(300 * time.Millisecond) // for it to wait on the server
+	if err := p.Load("testdata/test.mp4"); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-stream:
+		if !errors.Is(err, errReplaced) {
+			t.Errorf("the stream's Load returned %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the stream's Load went on waiting")
+	}
+	if d := p.Duration(); d < 2*time.Second || d > 4*time.Second {
+		t.Errorf("what plays is %v long, not test.mp4", d)
 	}
 }

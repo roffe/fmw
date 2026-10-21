@@ -58,6 +58,10 @@ type Player struct {
 	overScreen bool              // the pointer is on the picture rather than the controls
 	windowMenu *fyne.MainMenu    // the window's, while hidden
 
+	loads   atomic.Uint64 // calls of Load and Open, the latest of which wins
+	openMu  sync.Mutex
+	opening *media // the latest one's, while it opens
+
 	mu      sync.Mutex
 	s       *stream
 	playing bool
@@ -212,13 +216,57 @@ func (p *Player) showControls(show bool) {
 }
 
 // Load opens a file, or a URL that FFmpeg streams, in place of the current one
-// and shows its first frame.
+// and shows its first frame. A stream's server can take its time: a later
+// Load or Open interrupts this one, which then fails.
 func (p *Player) Load(path string) error {
+	return p.load(path, p.loads.Add(1))
+}
+
+// Open loads path as Load does, without waiting for it, and calls done, if
+// not nil, on the main goroutine with what Load returns, unless a later Load
+// or Open came first.
+func (p *Player) Open(path string, done func(error)) {
+	gen := p.loads.Add(1)
+	go func() {
+		if err := p.load(path, gen); done != nil && !errors.Is(err, errReplaced) {
+			fyne.Do(func() { done(err) })
+		}
+	}()
+}
+
+var errReplaced = errors.New("fmw: another file was loaded meanwhile")
+
+// load loads path for the gen'th call of Load or Open, if no later one came.
+func (p *Player) load(path string, gen uint64) error {
 	ctx := audioContext()
 	p.mu.Lock()
 	hwdec := p.hwdec
 	p.mu.Unlock()
-	m, err := openMedia(path, ctx != nil, hwdec)
+	var mine *media
+	m, err := openMedia(path, ctx != nil, hwdec, func(m *media) {
+		p.openMu.Lock()
+		defer p.openMu.Unlock()
+		mine = m
+		if p.loads.Load() != gen {
+			m.interrupt()
+			return
+		}
+		if p.opening != nil {
+			p.opening.interrupt()
+		}
+		p.opening = m
+	})
+	p.openMu.Lock()
+	if p.opening == mine {
+		p.opening = nil
+	}
+	p.openMu.Unlock()
+	if p.loads.Load() != gen {
+		if m != nil {
+			m.close()
+		}
+		return errReplaced
+	}
 	if err != nil {
 		return err
 	}
@@ -235,8 +283,16 @@ func (p *Player) Load(path string) error {
 	}
 	runtime.AddCleanup(s, (*media).close, m)
 
-	p.Pause()
 	p.mu.Lock()
+	if p.loads.Load() != gen { // a later one came while this one was set up
+		p.mu.Unlock()
+		if s.out != nil {
+			s.out.Close()
+		}
+		m.close()
+		return errReplaced
+	}
+	paused := p.pause()
 	old := p.s
 	p.s = s
 	if s.out != nil {
@@ -245,6 +301,9 @@ func (p *Player) Load(path string) error {
 	p.seekTo, p.turn = 0, 0
 	p.kick()
 	p.mu.Unlock()
+	if paused {
+		fyne.Do(p.publish)
+	}
 	if old != nil {
 		old.m.close()
 	}
@@ -274,31 +333,34 @@ func (p *Player) Play() {
 // Pause holds playback where it is.
 func (p *Player) Pause() {
 	p.mu.Lock()
+	paused := p.pause()
+	p.mu.Unlock()
+	if paused {
+		fyne.Do(p.publish)
+	}
+}
+
+// pause holds playback where it is and reports whether it played. Called
+// with mu held.
+func (p *Player) pause() bool {
 	if !p.playing {
-		p.mu.Unlock()
-		return
+		return false
 	}
 	p.pos = p.position()
 	p.playing = false
 	if p.s.out != nil {
 		p.s.out.PauseAndStopReading() // which also lets oto drop the player
 	}
-	p.mu.Unlock()
-	fyne.Do(p.publish)
+	return true
 }
 
 // end pauses s, which played to its end, and calls OnEnded, unless another
 // file was loaded or playback paused before either.
 func (p *Player) end(s *stream) {
 	p.mu.Lock()
-	if p.s != s || !p.playing {
+	if p.s != s || !p.pause() {
 		p.mu.Unlock()
 		return
-	}
-	p.pos = p.position()
-	p.playing = false
-	if s.out != nil {
-		s.out.PauseAndStopReading()
 	}
 	p.mu.Unlock()
 	fyne.Do(func() {
@@ -322,7 +384,7 @@ func (p *Player) Stop() {
 // the frame at t is decoded.
 func (p *Player) Seek(t time.Duration) {
 	p.mu.Lock()
-	if p.s != nil {
+	if p.s != nil && !p.s.m.live {
 		p.seekTo = max(t.Seconds(), 0)
 		if d := p.s.m.dur; d > 0 {
 			p.seekTo = min(p.seekTo, d)
@@ -742,9 +804,23 @@ func (p *Player) publish() {
 		}
 	}
 	p.updateSubtitles(now)
+	live := p.s != nil && p.s.m.live
+	if live != p.seek.Disabled() {
+		if live {
+			p.seek.Disable()
+		} else {
+			p.seek.Enable()
+		}
+	}
 	p.seek.Max, p.seek.Value = max(dur, 1), now
+	t := clock(now)
+	if live {
+		p.seek.Value = 0
+	} else {
+		t += " / " + clock(dur)
+	}
 	p.seek.Refresh()
-	if t := clock(now) + " / " + clock(dur); t != p.times.Text {
+	if t != p.times.Text {
 		p.times.SetText(t)
 	}
 }

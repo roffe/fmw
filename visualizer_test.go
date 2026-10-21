@@ -60,9 +60,7 @@ func TestMilkdropDraws(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := m.configure(30, false, Visualization{}.presetDir()); err != nil {
-		t.Log(err) // projectM's idle preset draws instead
-	}
+	m.configure(30, false, t.TempDir()) // no presets, which leaves projectM's idle one: random ones can start black
 	crop := cover(320, 180, 300, 200)
 	img := image.NewRGBA(image.Rect(0, 0, crop.Dx(), crop.Dy()))
 	pcm := make([]float32, 2*800)

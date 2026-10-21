@@ -162,6 +162,35 @@ static int download(AVFrame *f, AVFrame *tmp, AVBufferPool **pool, size_t *pool_
 	av_frame_move_ref(f, tmp);
 	return ret;
 }
+
+// interrupted has FFmpeg give up waiting on the network once *stop is set.
+static int interrupted(void *stop) { return __atomic_load_n((int *)stop, __ATOMIC_RELAXED); }
+static void interrupt(int *stop) { __atomic_store_n(stop, 1, __ATOMIC_RELAXED); }
+
+static AVFormatContext *alloc_input(int *stop) {
+	AVFormatContext *fc = avformat_alloc_context();
+	if (fc) {
+		fc->interrupt_callback.callback = interrupted;
+		fc->interrupt_callback.opaque = stop;
+	}
+	return fc;
+}
+
+// open_input opens url in fc, which it frees when it fails. A stream that
+// sends nothing for 10 seconds fails, and HTTP ones reconnect.
+static int open_input(AVFormatContext **fc, const char *url, int network) {
+	AVDictionary *opts = NULL;
+	if (network) {
+		av_dict_set(&opts, "rw_timeout", "10000000", 0);
+		av_dict_set(&opts, "reconnect", "1", 0);
+		av_dict_set(&opts, "reconnect_streamed", "1", 0);
+		av_dict_set(&opts, "reconnect_on_network_error", "1", 0);
+		av_dict_set(&opts, "reconnect_delay_max", "10", 0);
+	}
+	int ret = avformat_open_input(fc, url, NULL, &opts);
+	av_dict_free(&opts);
+	return ret;
+}
 */
 import "C"
 
@@ -171,6 +200,7 @@ import (
 	"os"
 	"runtime"
 	"slices"
+	"strings"
 	"sync"
 	"unsafe"
 
@@ -199,6 +229,10 @@ type media struct {
 	pcm    []byte
 	start  float64 // stream time where playback time is zero
 	dur    float64
+	live   bool // a stream with no end, which does not seek
+
+	stopMu sync.Mutex // guards stop, which interrupt sets while others hold mu
+	stop   *C.int     // in C memory, as FFmpeg keeps it
 
 	// how the video is shown: its width over height when its pixels are not
 	// square, how far to turn it clockwise, and its HDR peak in cd/m², which
@@ -230,11 +264,25 @@ type track struct {
 
 // openMedia opens path, which can be anything libavformat reads, with its
 // best video track and, if withAudio, the audio track that goes with it.
-func openMedia(path string, withAudio bool, hwdec string) (*media, error) {
+// opening, if not nil, gets the media before the wait for a stream's server,
+// to interrupt it.
+func openMedia(path string, withAudio bool, hwdec string, opening func(*media)) (*media, error) {
 	cpath := C.CString(path)
 	defer C.free(unsafe.Pointer(cpath))
-	m := &media{hwdec: hwdec}
-	if ret := C.avformat_open_input(&m.fc, cpath, nil, nil); ret < 0 {
+	m := &media{hwdec: hwdec, stop: (*C.int)(C.calloc(1, C.sizeof_int))}
+	if m.fc = C.alloc_input(m.stop); m.fc == nil {
+		m.close()
+		return nil, errors.New("fmw: out of memory")
+	}
+	if opening != nil {
+		opening(m)
+	}
+	network := C.int(0)
+	if strings.Contains(path, "://") && !strings.HasPrefix(path, "file:") {
+		network = 1
+	}
+	if ret := C.open_input(&m.fc, cpath, network); ret < 0 {
+		m.close()
 		return nil, averror(ret)
 	}
 	if ret := C.avformat_find_stream_info(m.fc, nil); ret < 0 {
@@ -271,6 +319,7 @@ func openMedia(path string, withAudio bool, hwdec string) (*media, error) {
 	if m.fc.duration != noPTS {
 		m.dur = float64(m.fc.duration) / C.AV_TIME_BASE
 	}
+	m.live = network == 1 && m.dur <= 0
 	m.openSubtitles()
 	if v := m.video; v != nil {
 		st := C.stream(m.fc, v.index)
@@ -561,21 +610,34 @@ func (m *media) seek(t float64) {
 }
 
 func (m *media) close() {
+	m.interrupt() // a read waiting on the network holds mu
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.fc == nil {
-		return
-	}
-	for _, tr := range []*track{m.video, m.audio} {
-		if tr != nil {
-			tr.free()
+	if m.fc != nil {
+		for _, tr := range []*track{m.video, m.audio} {
+			if tr != nil {
+				tr.free()
+			}
 		}
+		C.av_packet_free(&m.pkt)
+		C.sws_freeContext(m.sws)
+		C.swr_free(&m.swr)
+		m.closeSubtitles()
+		C.avformat_close_input(&m.fc)
 	}
-	C.av_packet_free(&m.pkt)
-	C.sws_freeContext(m.sws)
-	C.swr_free(&m.swr)
-	m.closeSubtitles()
-	C.avformat_close_input(&m.fc)
+	m.stopMu.Lock()
+	C.free(unsafe.Pointer(m.stop))
+	m.stop = nil
+	m.stopMu.Unlock()
+}
+
+// interrupt has whatever m waits for on the network give up, and fail.
+func (m *media) interrupt() {
+	m.stopMu.Lock()
+	if m.stop != nil {
+		C.interrupt(m.stop)
+	}
+	m.stopMu.Unlock()
 }
 
 // decode puts the next frame of t in t.frame, false at the end.
