@@ -595,7 +595,7 @@ func (m *media) take(dst *picture) {
 func (m *media) show(dst *picture) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.fc == nil || m.video == nil || m.video.last.data[0] == nil {
+	if m.fc == nil || m.video == nil || m.video.last.buf[0] == nil {
 		return false
 	}
 	m.hold(dst)
@@ -799,7 +799,7 @@ func (pic *picture) free() {
 // frame. A pic holding nothing leaves v without a picture.
 func (pic *picture) show(v *canvas.VideoFrame, turn int) {
 	f := pic.f
-	if f.data[0] == nil {
+	if f.buf[0] == nil { // a VideoToolbox frame has no data[0]
 		v.Width = 0
 		return
 	}
