@@ -120,6 +120,8 @@ To work on Fyne or gowgpu at the same time, clone them next to fmw and `go work 
 
 `make linux`, `make appimage` and `make windows` build what the releases have, into `dist`. They build against FFmpeg 9.0 from [BtbN's builds](https://github.com/BtbN/FFmpeg-Builds) and bundle it, it gets downloaded to `.tmp` the first time along with the Vulkan headers. They also build projectM 4.1.6 from source with CMake (Windows gets GLEW's own glew32.dll with it) and put the [Cream of the Crop](https://github.com/projectM-visualizer/presets-cream-of-the-crop) presets and the [MilkDrop textures](https://github.com/projectM-visualizer/presets-milkdrop-texture-pack) next to the binary. `make windows` cross compiles with llvm-mingw's `x86_64-w64-mingw32-clang`, `WINCC` and `WINCXX` pick other compilers.
 
+`make linux-static` builds a single binary into `dist/fmw-static` with FFmpeg and projectM linked in, only the presets, textures and licenses go next to it. FFmpeg gets built from source there with just what fmw needs: dav1d, OpenSSL for https, and VAAPI, NVDEC and Vulkan for hardware decoding, all static. It takes glibc, OpenGL, EGL and Wayland/X11 from the system like any desktop app. Needs meson, ninja and nasm on top of the rest.
+
 ## Hardware decoding
 
 By default fmw decodes with Vulkan Video on the window's own GPU device when the painter runs on Vulkan, with D3D12 video on it when the painter runs on Direct3D 12, and otherwise on the first kind of device FFmpeg's decoder knows that the machine has. File > Settings or `FMW_HWDEC` picks one by FFmpeg's name for it:
