@@ -339,13 +339,43 @@ func (m *media) music() bool {
 	return m.video == nil || m.cover
 }
 
-// open opens a decoder for stream i.
+// open opens a decoder for stream i, for video on Android's MediaCodec where
+// that is wanted and takes the stream, the CPU's otherwise.
 func (m *media) open(i C.int) *track {
 	st := C.stream(m.fc, i)
-	codec := C.avcodec_find_decoder(st.codecpar.codec_id)
+	want := m.hwdec
+	if want == "" {
+		want = os.Getenv("FMW_HWDEC")
+	}
+	if st.codecpar.codec_type == C.AVMEDIA_TYPE_VIDEO && (want == "" || want == "mediacodec") {
+		if codec := mediacodecDecoder(st.codecpar.codec_id); codec != nil {
+			if t := m.openWith(i, codec, "none"); t != nil {
+				return t
+			}
+		}
+	}
+	return m.openWith(i, C.avcodec_find_decoder(st.codecpar.codec_id), want)
+}
+
+// mediacodecDecoder returns FFmpeg's decoder of id that runs on Android's
+// MediaCodec, which hands back frames in memory, or nil without one.
+func mediacodecDecoder(id C.enum_AVCodecID) *C.AVCodec {
+	var it unsafe.Pointer
+	for c := C.av_codec_iterate(&it); c != nil; c = C.av_codec_iterate(&it) {
+		if c.id == id && C.av_codec_is_decoder(c) != 0 && c.wrapper_name != nil && C.GoString(c.wrapper_name) == "mediacodec" {
+			return c
+		}
+	}
+	return nil
+}
+
+// openWith opens codec for stream i, on the kind of hardware want names, see
+// useHardware.
+func (m *media) openWith(i C.int, codec *C.AVCodec, want string) *track {
 	if codec == nil {
 		return nil
 	}
+	st := C.stream(m.fc, i)
 	t := &track{index: i, cc: C.avcodec_alloc_context3(codec), frame: C.av_frame_alloc(), last: C.av_frame_alloc(), tb: float64(st.time_base.num) / float64(st.time_base.den)}
 	if C.avcodec_parameters_to_context(t.cc, st.codecpar) < 0 {
 		t.free()
@@ -355,7 +385,7 @@ func (m *media) open(i C.int) *track {
 	t.cc.thread_count = 0 // one per core
 	if st.codecpar.codec_type == C.AVMEDIA_TYPE_VIDEO {
 		t.cc.thread_count = decodeThreads(int(st.codecpar.width), int(st.codecpar.height))
-		if t.useHardware(codec, m.hwdec); t.hw != nil {
+		if t.useHardware(codec, want); t.hw != nil {
 			// the device needs none, and each takes tens of megabytes at 4K
 			// and up; two still have streams the device cannot do decode
 			// on the CPU in time
@@ -432,14 +462,10 @@ func decodeThreads(w, h int) C.int {
 	return C.int(min(max(w*h/500_000, 2), 8, runtime.NumCPU()))
 }
 
-// useHardware has t decode on the kind of device want names, or FMW_HWDEC
-// when want is empty, or else on the first kind its decoder knows that this
-// machine has. AV1 stays on the CPU: its default decoder, dav1d, has no
+// useHardware has t decode on the kind of device want names, or else on the
+// first kind its decoder knows that this machine has. AV1 stays on the CPU: its default decoder, dav1d, has no
 // hardware support, and FFmpeg's own one has no CPU fallback.
 func (t *track) useHardware(codec *C.AVCodec, want string) {
-	if want == "" {
-		want = os.Getenv("FMW_HWDEC")
-	}
 	if (want == "" || want == "vulkan") && t.useSharedVulkan(codec) ||
 		(want == "" || want == "d3d12va") && t.useSharedD3D12(codec) {
 		return
