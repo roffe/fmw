@@ -26,7 +26,7 @@ var playlists = []browse.Filter{
 // its own. Only the main goroutine uses it.
 type playlist struct {
 	app      fyne.App
-	load     func(entry) error // loads an entry into the player and plays it
+	load     func(entry, func(error)) // loads an entry into the player, plays it and says how that went
 	entries  []entry
 	current  int         // the entry playing, -1 for none
 	selected int         // in the window, -1 for none
@@ -37,7 +37,7 @@ type playlist struct {
 }
 
 // newPlaylist returns the playlist kept from the last run.
-func newPlaylist(a fyne.App, main fyne.Window, load func(entry) error) *playlist {
+func newPlaylist(a fyne.App, main fyne.Window, load func(entry, func(error))) *playlist {
 	pl := &playlist{app: a, main: main, load: load, current: -1, selected: -1}
 	if root := a.Storage().RootURI(); root != nil {
 		pl.kept = filepath.Join(root.Path(), "playlist.m3u8")
@@ -133,39 +133,52 @@ func (pl *playlist) open(path string) error {
 
 // play plays entry i.
 func (pl *playlist) play(i int) {
-	if err := pl.load(pl.entries[i]); err != nil {
-		dialog.ShowError(err, pl.parent())
-		return
-	}
-	pl.current = i
-	pl.refresh()
+	e := pl.entries[i]
+	pl.load(e, func(err error) {
+		if err != nil {
+			dialog.ShowError(err, pl.parent())
+			return
+		}
+		pl.current = pl.where(i, e)
+		pl.refresh()
+	})
 }
 
-// playFrom plays entry i, or the first after it that loads.
-func (pl *playlist) playFrom(i int) {
-	for ; i >= 0 && i < len(pl.entries); i++ {
-		if err := pl.load(pl.entries[i]); err != nil {
-			fyne.LogError("fmw: skipping "+pl.entries[i].Path, err)
-			continue
-		}
-		pl.current = i
-		pl.refresh()
+// playFrom plays entry i, or the first that loads from it on, going step at a
+// time.
+func (pl *playlist) playFrom(i, step int) {
+	if i < 0 || i >= len(pl.entries) {
 		return
 	}
+	e := pl.entries[i]
+	pl.load(e, func(err error) {
+		at := pl.where(i, e) // the entries can have changed while e loaded
+		if err != nil {
+			fyne.LogError("fmw: skipping "+e.Path, err)
+			if at >= 0 {
+				pl.playFrom(at+step, step)
+			}
+			return
+		}
+		pl.current = at
+		pl.refresh()
+	})
+}
+
+// where returns where e is on the playlist, i if it still is there, or -1.
+func (pl *playlist) where(i int, e entry) int {
+	if i < len(pl.entries) && pl.entries[i] == e {
+		return i
+	}
+	return slices.Index(pl.entries, e)
 }
 
 func (pl *playlist) next() {
-	pl.playFrom(pl.current + 1)
+	pl.playFrom(pl.current+1, 1)
 }
 
 func (pl *playlist) previous() {
-	for i := pl.current - 1; i >= 0; i-- {
-		if err := pl.load(pl.entries[i]); err == nil {
-			pl.current = i
-			pl.refresh()
-			return
-		}
-	}
+	pl.playFrom(pl.current-1, -1)
 }
 
 // ended moves on to the next entry when the one playing ends.
@@ -374,10 +387,15 @@ func (r *row) DoubleTapped(*fyne.PointEvent) {
 	r.pl.play(r.id)
 }
 
+// pathsOf returns the paths of dropped files, and the URLs of dropped links.
 func pathsOf(uris []fyne.URI) []string {
 	paths := make([]string, len(uris))
 	for i, u := range uris {
-		paths[i] = u.Path()
+		if u.Scheme() == "file" {
+			paths[i] = u.Path()
+		} else {
+			paths[i] = u.String()
+		}
 	}
 	return paths
 }

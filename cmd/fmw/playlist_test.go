@@ -16,13 +16,13 @@ func TestPlaylistPlaysThrough(t *testing.T) {
 	w := test.NewWindow(p)
 	defer w.Close()
 	started := make(chan string, 4)
-	pl := &playlist{app: a, main: w, current: -1, selected: -1, load: func(e entry) error {
-		if err := p.Load(e.Path); err != nil {
-			return err
+	pl := &playlist{app: a, main: w, current: -1, selected: -1, load: func(e entry, done func(error)) {
+		err := p.Load(e.Path)
+		if err == nil {
+			p.Play()
+			started <- e.Path
 		}
-		p.Play()
-		started <- e.Path
-		return nil
+		done(err)
 	}}
 	// The test driver calls OnEnded on the player's goroutine, the real ones
 	// on the main goroutine, which this test stands in for.
@@ -30,7 +30,7 @@ func TestPlaylistPlaysThrough(t *testing.T) {
 	p.OnEnded = func() { ended <- struct{}{} }
 
 	pl.add([]string{"../../testdata/test.mp4", "missing.mp3", "../../testdata/test.mpg"}) // the first plays 3 seconds
-	pl.playFrom(0)
+	pl.playFrom(0, 1)
 	if got := <-started; got != "../../testdata/test.mp4" {
 		t.Fatalf("%s started first", got)
 	}

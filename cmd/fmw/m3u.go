@@ -35,9 +35,11 @@ func (e entry) name() string {
 	return strings.TrimSuffix(filepath.Base(e.Path), filepath.Ext(e.Path))
 }
 
+// isPlaylist reports whether path is a playlist file. A URL is a stream
+// FFmpeg plays, an HLS one ending in .m3u8 too.
 func isPlaylist(path string) bool {
 	ext := strings.ToLower(filepath.Ext(path))
-	return ext == ".m3u" || ext == ".m3u8"
+	return (ext == ".m3u" || ext == ".m3u8") && !isURL(path)
 }
 
 func isURL(s string) bool {

@@ -8,7 +8,7 @@ It plays whatever FFmpeg can open, decodes on the GPU when there is one, and on 
 
 ## What it does
 
-- Plays pretty much anything FFmpeg opens, files and the URLs FFmpeg can stream
+- Plays pretty much anything FFmpeg opens, files and streams: http(s), HLS, DASH, RTSP, internet radio, whatever URL FFmpeg takes
 - Hardware decoding through FFmpeg: NVDEC, VA-API, VDPAU, Vulkan Video, D3D11, VideoToolbox. Falls back to the CPU for what the GPU can't do
 - Zero copy. When Fyne's WebGPU painter runs on Vulkan, FFmpeg decodes with Vulkan Video on the same GPU device the window draws with, and the painter copies the picture GPU side. No trip through RAM. On Windows the same goes for Direct3D 12 with D3D12 video, 8-bit video for now
 - YUV to RGB on the GPU, 8 and 10-bit, BT.601, BT.709 and BT.2020
@@ -39,7 +39,9 @@ Keys are up to the app, the fmw app sets these up (see [cmd/fmw/main.go](cmd/fmw
 | Alt+Enter | full screen, keypad Enter works too |
 | N / P | next / previous on the playlist |
 
-The app also has File > Open, Open Subtitles and Open Recent with native file dialogs, drag and drop (one file plays, several go on the playlist, an M3U replaces it, subtitle files get added to what plays), remembers the volume and puts the file name in the title.
+The app also has File > Open, Open URL, Open Subtitles and Open Recent with native file dialogs, drag and drop (one file plays, several go on the playlist, an M3U replaces it, subtitle files get added to what plays, a link dragged from the browser streams), remembers the volume and puts the file name in the title.
+
+Open URL takes the link on the clipboard if there's one there. The window doesn't wait for a stream's server, and opening something else while it connects drops it. A stream that sends nothing for 10 seconds gives up, HTTP ones reconnect. Live streams, the ones without an end, play without seeking.
 
 File > Playlist opens the playlist window. Drop files, folders or M3U/M3U8 playlists on it to add them, a folder's music and videos in name order, double click or Enter plays one, Delete removes it. It plays through by itself, skipping files that are gone, and it's still there next time you start fmw. Old M3U playlists made on Windows work: they're read as Windows-1252 when they aren't UTF-8, with backslashes in their paths. Playlists are saved as M3U8, with paths relative to the playlist where the files are next to it or below.
 
@@ -81,6 +83,8 @@ func main() {
 ```
 
 The rest is what you'd expect: `Play`, `Pause`, `TogglePlay`, `Stop`, `Seek`, `CurrentTime`, `Duration`, `Playing`, `SetVolume`, `Volume`, `AddSubtitles` and `ToggleFullScreen`. All of them are safe to call from any goroutine. `OnEnded` gets called when what's loaded has played to the end, that's how the app's playlist moves on.
+
+`Load` waits until the file or stream is open. `Open` does the same in the background and calls back on the main goroutine, which is what an app wants for URLs, a server can take its time. The last `Load` or `Open` wins: a newer one interrupts one still connecting.
 
 `SetHardwareDecoding` and `SetVisualization` take what the settings window sets, `HardwareDecoders` lists the kinds of device FFmpeg can decode on and `HasVisualizations` says if fmw was built with projectM.
 
@@ -162,6 +166,7 @@ Known limits:
 - HDR is tone mapped to SDR, there's no HDR output yet
 - 10-bit video goes through RAM when the painter runs on Direct3D 12: its copies won't take P010's planes to the formats the painter samples them as
 - AV1 decodes on the CPU with dav1d
+- An internet radio link to a .pls or plain .m3u playlist doesn't play, FFmpeg wants the stream's own URL (HLS .m3u8 links are fine)
 
 ## Tests
 

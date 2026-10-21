@@ -46,13 +46,15 @@ func main() {
 	a.Lifecycle().SetOnStopped(func() { prefs.SetFloat("volume", p.Volume()) })
 	set := &settings{prefs: prefs, p: p, main: w}
 	set.apply()
-	load := func(e entry) error {
-		if err := p.Load(e.Path); err != nil {
-			return err
-		}
-		w.SetTitle(title(e))
-		p.Play()
-		return nil
+	// a stream's server can take its time, which the window does not wait for
+	load := func(e entry, done func(error)) {
+		p.Open(e.Path, func(err error) {
+			if err == nil {
+				w.SetTitle(title(e))
+				p.Play()
+			}
+			done(err)
+		})
 	}
 	pl := newPlaylist(a, w, load)
 	p.OnEnded = pl.ended
@@ -64,32 +66,40 @@ func main() {
 	listRecent := func(paths []string) {
 		recent.ChildMenu.Items = nil
 		for _, path := range paths {
-			recent.ChildMenu.Items = append(recent.ChildMenu.Items, fyne.NewMenuItem(filepath.Base(path), func() { play(path) }))
+			recent.ChildMenu.Items = append(recent.ChildMenu.Items, fyne.NewMenuItem(recentName(path), func() { play(path) }))
 		}
 		recent.Disabled = len(paths) == 0
 	}
-	play = func(path string) {
-		var err error
-		if isPlaylist(path) {
-			if err = pl.open(path); err == nil {
-				pl.playFrom(0)
-			}
-		} else if err = load(entry{Path: path}); err == nil {
-			pl.playingOther()
-		}
-		if err != nil {
-			dialog.ShowError(err, w)
-			return
-		}
+	remember := func(path string) {
 		paths := addRecent(prefs.StringList("recent"), path)
 		prefs.SetStringList("recent", paths)
 		listRecent(paths)
 		mainMenu.Refresh()
 	}
+	play = func(path string) {
+		if isPlaylist(path) {
+			if err := pl.open(path); err != nil {
+				dialog.ShowError(err, w)
+				return
+			}
+			pl.playFrom(0, 1)
+			remember(path)
+			return
+		}
+		load(entry{Path: path}, func(err error) {
+			if err != nil {
+				dialog.ShowError(err, w)
+				return
+			}
+			pl.playingOther()
+			remember(path)
+		})
+	}
 
 	open := fyne.NewMenuItem("Open…", func() {
 		openFile(w, "Open media", media, play)
 	})
+	openURL := fyne.NewMenuItem("Open URL…", func() { askURL(a, w, play) })
 	openSubs := fyne.NewMenuItem("Open Subtitles…", func() {
 		openFile(w, "Open subtitles", subtitles, func(path string) {
 			if err := p.AddSubtitles(path); err != nil {
@@ -110,7 +120,7 @@ func main() {
 	showPlaylist := fyne.NewMenuItem("Playlist", pl.show)
 	showSettings := fyne.NewMenuItem("Settings…", func() { set.show(a) })
 	mainMenu = fyne.NewMainMenu(
-		fyne.NewMenu("File", open, openSubs, recent, fyne.NewMenuItemSeparator(), showPlaylist, showSettings),
+		fyne.NewMenu("File", open, openURL, openSubs, recent, fyne.NewMenuItemSeparator(), showPlaylist, showSettings),
 		fyne.NewMenu("Help", showAbout))
 	w.SetMainMenu(mainMenu)
 	for _, enter := range []fyne.KeyName{fyne.KeyReturn, fyne.KeyEnter} { // Enter is the keypad's
@@ -139,7 +149,7 @@ func main() {
 		case len(paths) == 1 && !isFolder(paths[0]):
 			play(paths[0])
 		case len(paths) > 0:
-			pl.playFrom(pl.add(paths))
+			pl.playFrom(pl.add(paths), 1)
 		}
 	}
 	w.SetOnDropped(func(_ fyne.Position, uris []fyne.URI) {
@@ -263,6 +273,44 @@ func nativeHandle(w fyne.Window) (h uintptr) {
 		})
 	}
 	return h
+}
+
+// askURL asks for the URL of a stream, the one on the clipboard if it holds
+// one, and gives open it.
+func askURL(a fyne.App, w fyne.Window, open func(string)) {
+	url := widget.NewEntry()
+	url.SetPlaceHolder("https://…")
+	if clip := strings.TrimSpace(a.Clipboard().Content()); isURL(clip) {
+		url.SetText(clip)
+	}
+	url.Validator = func(s string) error {
+		if !isURL(strings.TrimSpace(s)) {
+			return errors.New("not a URL")
+		}
+		return nil
+	}
+	d := dialog.NewForm("Open URL", "Open", "Cancel", []*widget.FormItem{widget.NewFormItem("URL", url)}, func(ok bool) {
+		if ok {
+			open(strings.TrimSpace(url.Text))
+		}
+	}, w)
+	url.OnSubmitted = func(string) { d.Submit() }
+	d.Resize(fyne.NewSize(600, 0))
+	d.Show()
+	w.Canvas().Focus(url)
+}
+
+// recentName is what Open Recent shows for path: a file's name, or a URL
+// without its scheme, cut short in the middle.
+func recentName(path string) string {
+	if !isURL(path) {
+		return filepath.Base(path)
+	}
+	name := []rune(path[strings.Index(path, "://")+3:])
+	if len(name) > 60 {
+		name = append(append(name[:29:29], '…'), name[len(name)-30:]...)
+	}
+	return string(name)
 }
 
 // addRecent puts path first in the recent paths, once, keeping maxRecent.
