@@ -34,12 +34,16 @@ static void lock_device(const AVFrame *f, int lock) {
 		hw->unlock(hw->lock_ctx);
 }
 
-// wait_d3d12 holds the calling thread until the GPU is done decoding f.
+// wait_d3d12 holds the calling thread until the GPU is done decoding f. Not
+// with the frame's event, which FFmpeg's threads wait with too: without one
+// SetEventOnCompletion returns once the fence is reached.
 static void wait_d3d12(const AVFrame *f) {
 	AVD3D12VASyncContext *sync = &d3d12_frame(f)->sync_ctx;
-	if (ID3D12Fence_GetCompletedValue(sync->fence) < sync->fence_value &&
-		SUCCEEDED(ID3D12Fence_SetEventOnCompletion(sync->fence, sync->fence_value, sync->event)))
-		WaitForSingleObject(sync->event, INFINITE);
+	lock_device(f, 1);
+	uint64_t value = sync->fence_value;
+	lock_device(f, 0);
+	if (ID3D12Fence_GetCompletedValue(sync->fence) < value)
+		ID3D12Fence_SetEventOnCompletion(sync->fence, value, NULL);
 }
 */
 import "C"
