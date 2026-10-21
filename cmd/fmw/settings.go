@@ -13,7 +13,7 @@ import (
 	"github.com/roffe/fmw"
 )
 
-var resolutions = [][2]int{{1280, 720}, {1920, 1080}, {2560, 1440}, {3840, 2160}}
+var resolutions = [][2]int{{640, 360}, {854, 480}, {960, 540}, {1280, 720}, {1600, 900}, {1920, 1080}, {2560, 1440}, {3840, 2160}}
 
 // settings keeps the player's settings in the app's preferences, where the
 // settings window changes them.
