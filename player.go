@@ -86,6 +86,8 @@ type stream struct {
 	vis      *visualizer
 	sent     atomic.Int64 // bytes oto has read since the last seek
 	start    float64      // stream time of the first of them
+	mixed    float64      // seconds of them the device had taken, as position last saw
+	read     float64      // the most seconds the device has taken at once
 	videoEOF bool
 	audioEOF atomic.Bool
 
@@ -679,6 +681,7 @@ func (p *Player) land(s *stream, t float64, spare *picture) {
 	p.pos, p.at, p.heard = t, time.Now(), t-deviceBuffer.Seconds()
 	s.start, s.videoEOF = t, !ok
 	s.sent.Store(0)
+	s.mixed = 0
 	s.audioEOF.Store(false)
 	s.pcm, s.silence, s.skipTo = nil, 0, t
 	if s.out != nil && p.playing && p.seekTo < 0 {
@@ -736,8 +739,8 @@ func (p *Player) now() float64 {
 
 // position returns the playback clock: the audio heard so far while there is
 // audio, the wall clock otherwise. The audio clock only moves when the device
-// takes a chunk, so in between it runs on wall time, stopping a device buffer
-// ahead if the audio stalls. Called with mu held.
+// takes a chunk, so in between it runs on wall time, stopping a device buffer,
+// or the biggest chunk, ahead if the audio stalls. Called with mu held.
 func (p *Player) position() float64 {
 	if !p.playing {
 		return p.pos
@@ -747,10 +750,14 @@ func (p *Player) position() float64 {
 	p.at = now
 	if s := p.s; s.out != nil && !s.audioEOF.Load() {
 		mixed := float64(int(s.sent.Load())-s.out.BufferedSize()) / (sampleRate * 8)
-		if heard := s.start + mixed - deviceBuffer.Seconds(); heard != p.heard {
+		if mixed != s.mixed {
+			s.read = max(s.read, mixed-s.mixed)
+			s.mixed = mixed
+		}
+		if heard := s.start + mixed - latency(s); heard != p.heard {
 			p.pos, p.heard = heard, heard
 		}
-		p.pos = min(p.pos, p.heard+deviceBuffer.Seconds())
+		p.pos = min(p.pos, p.heard+max(deviceBuffer.Seconds(), s.read))
 	}
 	return p.pos
 }
@@ -764,7 +771,12 @@ func (p *Player) played() (int64, bool) {
 	if s == nil || s.out == nil || !p.playing || !s.m.music() {
 		return 0, false
 	}
-	return s.sent.Load() - int64(s.out.BufferedSize()) - int64(deviceBuffer.Seconds()*sampleRate)*8, true
+	return s.sent.Load() - int64(s.out.BufferedSize()) - int64(latency(s)*sampleRate)*8, true
+}
+
+// latency is how long the sound s mixes takes to be heard.
+func latency(s *stream) float64 {
+	return deviceBuffer.Seconds() + queuedReads*s.read
 }
 
 // publish puts the latest frame and the playback state on screen. The work

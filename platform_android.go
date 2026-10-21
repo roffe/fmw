@@ -36,6 +36,11 @@ import (
 	"fyne.io/fyne/v2/driver"
 )
 
+// queuedReads is how many of the mixer's reads oto's driver queues ahead of
+// the device: on Android it reads three device buffers at a time into a FIFO
+// holding two such reads.
+const queuedReads = 2
+
 // platformReady gives FFmpeg the app's JVM, once, before anything opens.
 var platformReady = sync.OnceValue(func() error {
 	return driver.RunNative(func(ctx any) error {
