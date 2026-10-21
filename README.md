@@ -138,7 +138,7 @@ It needs libprojectM 4 (`libprojectm` on Arch) and presets, by default from `/us
 
 Presets get drawn at a fixed size, 1920 x 1080 unless you pick another in Settings, and scaled to cover the player, cut at the sides or the top and bottom when the window has another shape. projectM starts a preset over from black whenever the size it draws at changes, so this way resizing the window or going full screen doesn't.
 
-projectM only speaks OpenGL, so it draws in its own headless EGL context and every frame is read back and uploaded to the painter. That's around 25% of a core at 1080p. Handing the texture straight to the painter's GPU device is next.
+projectM only speaks OpenGL, so it draws in a headless EGL context of its own. When the painter draws with Vulkan, on the same GPU, the frames never leave it: OpenGL draws into buffers Vulkan shares with it (`GL_EXT_memory_object_fd`) and the painter copies them into its texture. That's 4 to 7% of a core, nearly all of it projectM running the preset's code. Otherwise every frame is read back and uploaded again, around 25%.
 
 ## How fast
 

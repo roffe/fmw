@@ -108,7 +108,7 @@ func vulkanDevice() *C.AVBufferRef {
 	sharedVulkan.mu.Lock()
 	defer sharedVulkan.mu.Unlock()
 	if sharedVulkan.dev == nil {
-		if in, ok := webgpu.VulkanDevice(); ok {
+		if in, ok := webgpu.VulkanDevice(); ok && len(in.QueueFamilies) > 0 {
 			sharedVulkan.dev = newVulkanDevice(&in)
 		}
 	}

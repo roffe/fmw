@@ -88,13 +88,17 @@ func isDir(path string) bool {
 
 // visualizer shows MilkDrop presets, by projectM, dancing to music that has
 // no picture. projectM draws on a thread of its own, from the sound oto
-// read, a device buffer late so the beats land as they are heard.
+// read, a device buffer late so the beats land as they are heard. Its frames
+// stay on the GPU, shown in frame, where they can, or else are read back
+// into the raster.
 type visualizer struct {
 	raster *canvas.Raster
+	frame  *canvas.VideoFrame
 	heard  func() (int64, bool) // bytes of sound out of the speakers since the last seek, while music plays
 	wake   chan struct{}
 	skip   atomic.Bool
 	failed atomic.Bool
+	shared atomic.Bool // frames go to frame
 	once   sync.Once
 
 	mu      sync.Mutex
@@ -114,6 +118,8 @@ func newVisualizer(heard func() (int64, bool)) *visualizer {
 	}
 	v.raster = canvas.NewRaster(v.generate)
 	v.raster.Hide()
+	v.frame = &canvas.VideoFrame{FillMode: canvas.ImageFillCover}
+	v.frame.Hide()
 	return v
 }
 
@@ -163,13 +169,9 @@ func (v *visualizer) show(music bool) {
 	off := v.cfg.Off
 	v.mu.Unlock()
 	music = music && projectM && !off && !v.failed.Load()
-	if music != v.raster.Visible() {
-		if music {
-			v.raster.Show()
-		} else {
-			v.raster.Hide()
-		}
-	}
+	shared := v.shared.Load()
+	showIf(v.raster, music && !shared)
+	showIf(v.frame, music && shared)
 	if music {
 		// ponytail: the thread lives as long as the process and keeps its
 		// Player; stop it from a Player.Close if players come and go
@@ -178,6 +180,17 @@ func (v *visualizer) show(music bool) {
 		case v.wake <- struct{}{}:
 		default:
 		}
+	}
+}
+
+func showIf(o fyne.CanvasObject, show bool) {
+	if show == o.Visible() {
+		return
+	}
+	if show {
+		o.Show()
+	} else {
+		o.Hide()
 	}
 }
 
@@ -206,19 +219,21 @@ func (v *visualizer) run() {
 		v.mu.Lock()
 		cfg, changes, vw, vh := v.cfg, v.changes, v.w, v.h
 		v.mu.Unlock()
-		if vw <= 0 || vh <= 0 {
-			continue
-		}
 		var err error
 		if m == nil {
-			m, err = newMilkdrop(cfg.size())
+			if m, err = newMilkdrop(cfg.size()); err == nil {
+				v.shared.Store(m.shared())
+			}
 		} else if w, h := cfg.size(); changes != applied && (m.w != w || m.h != h) {
 			err = m.resize(w, h)
 		}
 		if err != nil {
 			fyne.LogError("fmw: no visualization", err)
 			v.failed.Store(true)
-			fyne.Do(v.raster.Hide)
+			fyne.Do(func() {
+				v.raster.Hide()
+				v.frame.Hide()
+			})
 			return
 		}
 		if changes != applied {
@@ -231,6 +246,14 @@ func (v *visualizer) run() {
 			m.next()
 		}
 		pcm, fed = v.sound(pcm, fed, heard)
+		if m.shared() {
+			m.drawTo(pcm, v.frame)
+			continue
+		}
+		if vw <= 0 || vh <= 0 {
+			m.draw(pcm, nil, image.Rectangle{}) // until the raster says how big it is
+			continue
+		}
 		crop := cover(m.w, m.h, vw, vh)
 		img := v.take(crop.Dx(), crop.Dy())
 		m.draw(pcm, img, crop)

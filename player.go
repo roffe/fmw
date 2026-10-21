@@ -133,7 +133,7 @@ func (p *Player) CreateRenderer() fyne.WidgetRenderer {
 		container.NewHBox(p.play, p.stop, p.times),
 		container.NewHBox(widget.NewIcon(theme.VolumeUpIcon()), vol, p.full),
 		p.seek)
-	screen := container.NewStack(canvas.NewRectangle(color.Black), p.screen, p.vis.raster, p.subs)
+	screen := container.NewStack(canvas.NewRectangle(color.Black), p.screen, p.vis.raster, p.vis.frame, p.subs)
 	return widget.NewSimpleRenderer(container.NewBorder(nil, p.bar, nil, nil, screen))
 }
 
