@@ -66,6 +66,8 @@ github.com/roffe/fyne/v2 v2.0.0-20261020225307-0b60790dce9a h1:wj6GkkQMfcmL2CsKi
 github.com/roffe/fyne/v2 v2.0.0-20261020225307-0b60790dce9a/go.mod h1:Hhi/LMfQ1SW0A/wVbtYUgGUDdqN8lPwAp+Olo4nHEG4=
 github.com/roffe/gowgpu v0.0.0-20261020224720-6a81e19418c9 h1:9h9xn8ham3eNvC+TeuMg0p3oeDlIIeVnCvLeueEL9hk=
 github.com/roffe/gowgpu v0.0.0-20261020224720-6a81e19418c9/go.mod h1:prhckda/6oiVUHHq+eqSpIybpIrn9MjON9Rb1VNFrto=
+github.com/roffe/mdi3 v0.0.0-20261017000628-abdda3baa3d7 h1:8sHDfCUKhxQqK9v+t5+NWklcWz6DPp5lE4gwC48lSLI=
+github.com/roffe/mdi3 v0.0.0-20261017000628-abdda3baa3d7/go.mod h1:7mdyG3ioEiuTZzNJP7md2RgbMEbeQDWZyrqdZTig4lU=
 github.com/rymdport/portal v0.4.2 h1:7jKRSemwlTyVHHrTGgQg7gmNPJs88xkbKcIL3NlcmSU=
 github.com/rymdport/portal v0.4.2/go.mod h1:kFF4jslnJ8pD5uCi17brj/ODlfIidOxlgUDTO5ncnC4=
 github.com/srwiley/oksvg v0.0.0-20221011165216-be6e8873101c h1:km8GpoQut05eY3GiYWEedbTT0qnSxrCjsVbb7yKY1KE=

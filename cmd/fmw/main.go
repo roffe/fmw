@@ -19,6 +19,7 @@ import (
 	"fyne.io/fyne/v2/widget"
 	"github.com/roffe/browse"
 	"github.com/roffe/fmw"
+	"github.com/roffe/mdi3"
 )
 
 const (
@@ -39,6 +40,7 @@ var (
 
 func main() {
 	a := app.NewWithID("com.roffe.fmw")
+	a.Settings().SetTheme(mdi3.New(nil))
 	prefs := a.Preferences()
 	w := a.NewWindow("fmw")
 	p := fmw.NewPlayer()

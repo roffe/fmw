@@ -7,6 +7,7 @@ require (
 	github.com/ebitengine/oto/v3 v3.5.1
 	github.com/roffe/browse v0.0.0-20261004104941-eb6d091b1974
 	github.com/roffe/gowgpu v0.0.0-20261020224720-6a81e19418c9
+	github.com/roffe/mdi3 v0.0.0-20261017000628-abdda3baa3d7
 	golang.org/x/text v0.22.0
 )
 
