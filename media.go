@@ -490,6 +490,12 @@ func (t *track) useHardware(codec *C.AVCodec, want string) {
 		if cfg.methods&C.AV_CODEC_HW_CONFIG_METHOD_HW_DEVICE_CTX == 0 || want != "" && want != name {
 			continue
 		}
+		// Vulkan picked by itself decodes on the painter's device, above. A
+		// device of FFmpeg's own comes up without video queues too, and the
+		// decoder then falls back to the CPU with the threads cut for it.
+		if want == "" && cfg.device_type == C.AV_HWDEVICE_TYPE_VULKAN {
+			continue
+		}
 		if dev := hwDevice(cfg.device_type); dev != nil {
 			t.useDevice(dev, cfg.pix_fmt)
 			return
