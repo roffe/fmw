@@ -1,4 +1,4 @@
-.PHONY: linux appimage windows clean
+.PHONY: linux appimage windows android install-android clean
 
 VERSION=$(shell sed -n 's/^Version = "\(.*\)"/\1/p' cmd/fmw/FyneApp.toml)
 FFMPEG=https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n9.0-latest
@@ -11,6 +11,11 @@ GLEW=2.3.1
 PRESETS=https://github.com/projectM-visualizer/presets-cream-of-the-crop/archive/0180df21f5e0bd39b9060cc5de420ed2f1f9e509.tar.gz
 TEXTURES=https://github.com/projectM-visualizer/presets-milkdrop-texture-pack/archive/6368812f27bc747b517218fbf89d21d59afce4d9.tar.gz
 PROJECTM_CMAKE=-DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_LIBDIR=lib -DENABLE_SYSTEM_PROJECTM_EVAL=OFF -DBUILD_TESTING=OFF -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+FFMPEG_SRC=https://ffmpeg.org/releases/ffmpeg-9.0.tar.xz
+NDK?=$(HOME)/Android/android-ndk-r30
+NDKBIN=$(NDK)/toolchains/llvm/prebuilt/linux-x86_64/bin
+ANDROID_API=21
+ADB?=$(HOME)/Android/platform-tools/adb
 
 # The releases build against FFmpeg from BtbN and projectM built here, and
 # bundle them, not the system's
@@ -31,6 +36,22 @@ default: linux
 	unzip -q -d .tmp .tmp/win64.zip
 	mv .tmp/ffmpeg-n9.0-latest-win64-lgpl-shared-9.0 $@
 	rm .tmp/win64.zip
+
+# BtbN has no Android builds. Static, as fyne package bundles no libraries
+# but fmw's own, and at the API level fyne builds that with. JNI for the
+# content:// URIs Android's pickers give and for MediaCodec.
+.tmp/android-arm64:
+	rm -rf $@.part .tmp/ffmpeg-android
+	mkdir -p .tmp/ffmpeg-android
+	curl -fsSL $(FFMPEG_SRC) | tar -xJ --strip-components=1 -C .tmp/ffmpeg-android
+	cd .tmp/ffmpeg-android && ./configure --prefix=$(CURDIR)/$@.part --target-os=android --arch=aarch64 --enable-cross-compile \
+		--cc=$(NDKBIN)/aarch64-linux-android$(ANDROID_API)-clang --cxx=$(NDKBIN)/aarch64-linux-android$(ANDROID_API)-clang++ \
+		--ar=$(NDKBIN)/llvm-ar --nm=$(NDKBIN)/llvm-nm --ranlib=$(NDKBIN)/llvm-ranlib --strip=$(NDKBIN)/llvm-strip \
+		--enable-static --disable-shared --enable-pic --enable-jni --enable-mediacodec --disable-programs --disable-doc --disable-avdevice --disable-avfilter --disable-vulkan
+	$(MAKE) -C .tmp/ffmpeg-android -j$(shell nproc) install
+	sed -i 's|$(CURDIR)/$@.part|$${pcfiledir}/../..|' $@.part/lib/pkgconfig/*.pc
+	cp .tmp/ffmpeg-android/COPYING.LGPLv2.1 $@.part/LICENSE.txt
+	mv $@.part $@
 
 .tmp/Vulkan-Headers:
 	git clone -q --depth 1 -b $(VULKAN_HEADERS) https://github.com/KhronosGroup/Vulkan-Headers $@
@@ -130,6 +151,21 @@ windows: .tmp/win64 .tmp/Vulkan-Headers .tmp/projectm-win64 .tmp/presets .tmp/te
 	cp -a .tmp/presets dist/windows/presets
 	cp -a .tmp/textures dist/windows/textures
 	cd dist/windows && zip -qr ../fmw_windows_x64.zip *
+
+# Debug signed, as --release needs a keystore. No Vulkan Video on Android, so
+# no zero copy yet. fyne package leaves FyneApp.toml's fyneDo migration out
+# of mobile builds, so its tag is given here.
+android: .tmp/android-arm64
+	mkdir -p dist
+	cp cmd/fmw/FyneApp.toml .tmp/FyneApp.toml # fyne package bumps its Build every run
+	cd cmd/fmw && ANDROID_NDK_HOME=$(NDK) PKG_CONFIG_LIBDIR=$(CURDIR)/.tmp/android-arm64/lib/pkgconfig \
+		CGO_CFLAGS='-O2 -g' \
+		fyne package --os android/arm64 --tags novulkan,migrated_fynedo
+	mv .tmp/FyneApp.toml cmd/fmw/FyneApp.toml
+	mv cmd/fmw/fmw.apk dist/fmw_android_arm64.apk
+
+install-android: android
+	$(ADB) install -r dist/fmw_android_arm64.apk
 
 clean:
 	rm -rf .tmp dist
