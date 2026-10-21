@@ -155,21 +155,32 @@ func newVulkanDevice(in *vulkan.Interop) *C.AVBufferRef {
 // painter draws with, so its frames stay on the GPU, when the codec can and
 // there is such a device.
 func (t *track) useSharedVulkan(codec *C.AVCodec) bool {
+	cfg := vulkanConfig(codec)
+	if cfg == nil {
+		return false
+	}
+	dev := vulkanDevice()
+	if dev == nil {
+		return false
+	}
+	t.useDevice(dev, cfg.pix_fmt) // with t.hw to download the formats painters do not take
+	t.gpu = true
+	return true
+}
+
+// sharesVulkan reports whether codec decodes on the device shared with Fyne's
+// painter, which takes Vulkan Video.
+func sharesVulkan(codec *C.AVCodec) bool {
+	return vulkanConfig(codec) != nil && vulkanDevice() != nil
+}
+
+// vulkanConfig returns how codec decodes on a Vulkan device, or nil.
+func vulkanConfig(codec *C.AVCodec) *C.AVCodecHWConfig {
 	for i := C.int(0); ; i++ {
 		cfg := C.avcodec_get_hw_config(codec, i)
-		if cfg == nil {
-			return false
+		if cfg == nil || cfg.device_type == C.AV_HWDEVICE_TYPE_VULKAN && cfg.methods&C.AV_CODEC_HW_CONFIG_METHOD_HW_DEVICE_CTX != 0 {
+			return cfg
 		}
-		if cfg.device_type != C.AV_HWDEVICE_TYPE_VULKAN || cfg.methods&C.AV_CODEC_HW_CONFIG_METHOD_HW_DEVICE_CTX == 0 {
-			continue
-		}
-		dev := vulkanDevice()
-		if dev == nil {
-			return false
-		}
-		t.useDevice(dev, cfg.pix_fmt) // with t.hw to download the formats painters do not take
-		t.gpu = true
-		return true
 	}
 }
 

@@ -12,6 +12,8 @@ import "fyne.io/fyne/v2/canvas"
 // novulkan are for an FFmpeg without Vulkan.
 func (*track) useSharedVulkan(*C.AVCodec) bool { return false }
 
+func sharesVulkan(*C.AVCodec) bool { return false }
+
 func (*picture) showImage(v *canvas.VideoFrame) { v.Width = 0 }
 
 func waitDecoded(*C.AVFrame) {}

@@ -40,14 +40,15 @@ default: linux
 # BtbN has no Android builds. Static, as fyne package bundles no libraries
 # but fmw's own, and at the API level fyne builds that with. JNI for the
 # content:// URIs Android's pickers give and for MediaCodec.
-.tmp/android-arm64:
+.tmp/android-arm64: .tmp/Vulkan-Headers
 	rm -rf $@.part .tmp/ffmpeg-android
 	mkdir -p .tmp/ffmpeg-android
 	curl -fsSL $(FFMPEG_SRC) | tar -xJ --strip-components=1 -C .tmp/ffmpeg-android
 	cd .tmp/ffmpeg-android && ./configure --prefix=$(CURDIR)/$@.part --target-os=android --arch=aarch64 --enable-cross-compile \
 		--cc=$(NDKBIN)/aarch64-linux-android$(ANDROID_API)-clang --cxx=$(NDKBIN)/aarch64-linux-android$(ANDROID_API)-clang++ \
 		--ar=$(NDKBIN)/llvm-ar --nm=$(NDKBIN)/llvm-nm --ranlib=$(NDKBIN)/llvm-ranlib --strip=$(NDKBIN)/llvm-strip \
-		--enable-static --disable-shared --enable-pic --enable-jni --enable-mediacodec --disable-programs --disable-doc --disable-avdevice --disable-avfilter --disable-vulkan
+		--enable-static --disable-shared --enable-pic --enable-jni --enable-mediacodec --enable-vulkan --extra-cflags=-I$(CURDIR)/.tmp/Vulkan-Headers/include \
+		--disable-programs --disable-doc --disable-avdevice --disable-avfilter
 	$(MAKE) -C .tmp/ffmpeg-android -j$(shell nproc) install
 	sed -i 's|$(CURDIR)/$@.part|$${pcfiledir}/../..|' $@.part/lib/pkgconfig/*.pc
 	cp .tmp/ffmpeg-android/COPYING.LGPLv2.1 $@.part/LICENSE.txt
@@ -162,17 +163,17 @@ windows: .tmp/win64 .tmp/Vulkan-Headers .tmp/projectm-win64 .tmp/presets .tmp/te
 	cd dist/windows && zip -qr ../fmw_windows_x64.zip *
 
 # Debug signed, as --release needs a keystore, and with go.work's checkouts,
-# ahead of what go.mod pins. No Vulkan Video on Android, so no zero copy yet.
-# fyne package leaves FyneApp.toml's fyneDo migration out of mobile builds,
-# so its tag is given here.
+# ahead of what go.mod pins. Video decodes with zero copy where the GPU has
+# Vulkan Video, else on MediaCodec. fyne package leaves FyneApp.toml's fyneDo
+# migration out of mobile builds, so its tag is given here.
 android: GOWORK=
-android: .tmp/android-arm64 .tmp/projectm-android-arm64
+android: .tmp/android-arm64 .tmp/projectm-android-arm64 .tmp/Vulkan-Headers
 	mkdir -p dist
 	cp cmd/fmw/FyneApp.toml .tmp/FyneApp.toml # fyne package bumps its Build every run
 	cd cmd/fmw && ANDROID_NDK_HOME=$(NDK) PKG_CONFIG_LIBDIR=$(CURDIR)/.tmp/android-arm64/lib/pkgconfig \
-		CGO_CFLAGS="-O2 -g -I$(CURDIR)/.tmp/projectm-android-arm64/include" \
+		CGO_CFLAGS="$(CGO_CFLAGS) -I$(CURDIR)/.tmp/projectm-android-arm64/include" \
 		CGO_LDFLAGS="-L$(CURDIR)/.tmp/projectm-android-arm64/lib" \
-		fyne package --os android/arm64 --tags novulkan,migrated_fynedo,projectm
+		fyne package --os android/arm64 --tags migrated_fynedo,projectm
 	mv .tmp/FyneApp.toml cmd/fmw/FyneApp.toml
 	mv cmd/fmw/fmw.apk dist/fmw_android_arm64.apk
 

@@ -339,22 +339,26 @@ func (m *media) music() bool {
 	return m.video == nil || m.cover
 }
 
-// open opens a decoder for stream i, for video on Android's MediaCodec where
-// that is wanted and takes the stream, the CPU's otherwise.
+// open opens a decoder for stream i. Video decodes on Android's MediaCodec
+// where that is wanted, or where no device shared with the painter decodes it
+// with nothing copied, and takes the stream; else on the hardware or the CPU
+// useHardware picks.
 func (m *media) open(i C.int) *track {
 	st := C.stream(m.fc, i)
+	codec := C.avcodec_find_decoder(st.codecpar.codec_id)
 	want := m.hwdec
 	if want == "" {
 		want = os.Getenv("FMW_HWDEC")
 	}
 	if st.codecpar.codec_type == C.AVMEDIA_TYPE_VIDEO && (want == "" || want == "mediacodec") {
-		if codec := mediacodecDecoder(st.codecpar.codec_id); codec != nil {
-			if t := m.openWith(i, codec, "none"); t != nil {
+		mc := mediacodecDecoder(st.codecpar.codec_id)
+		if mc != nil && (want == "mediacodec" || codec == nil || !sharesVulkan(codec)) {
+			if t := m.openWith(i, mc, "none"); t != nil {
 				return t
 			}
 		}
 	}
-	return m.openWith(i, C.avcodec_find_decoder(st.codecpar.codec_id), want)
+	return m.openWith(i, codec, want)
 }
 
 // mediacodecDecoder returns FFmpeg's decoder of id that runs on Android's
