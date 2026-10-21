@@ -183,6 +183,11 @@ func (v *visualizer) show(music bool) {
 	}
 }
 
+// showing reports whether the visualizer shows.
+func (v *visualizer) showing() bool {
+	return v.raster.Visible() || v.frame.Visible()
+}
+
 func showIf(o fyne.CanvasObject, show bool) {
 	if show == o.Visible() {
 		return
@@ -210,15 +215,15 @@ func (v *visualizer) run() {
 	tick := time.NewTicker(time.Second / visualFPS)
 	for range tick.C {
 		heard, ok := v.heard()
-		if !ok {
+		v.mu.Lock()
+		cfg, changes, vw, vh := v.cfg, v.changes, v.w, v.h
+		v.mu.Unlock()
+		if !ok || cfg.Off {
 			tick.Stop()
 			<-v.wake
 			tick.Reset(time.Second / visualFPS)
 			continue
 		}
-		v.mu.Lock()
-		cfg, changes, vw, vh := v.cfg, v.changes, v.w, v.h
-		v.mu.Unlock()
 		var err error
 		if m == nil {
 			if m, err = newMilkdrop(cfg.size()); err == nil {

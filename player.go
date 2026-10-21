@@ -287,6 +287,31 @@ func (p *Player) Pause() {
 	fyne.Do(p.publish)
 }
 
+// end pauses s, which played to its end, and calls OnEnded, unless another
+// file was loaded or playback paused before either.
+func (p *Player) end(s *stream) {
+	p.mu.Lock()
+	if p.s != s || !p.playing {
+		p.mu.Unlock()
+		return
+	}
+	p.pos = p.position()
+	p.playing = false
+	if s.out != nil {
+		s.out.PauseAndStopReading()
+	}
+	p.mu.Unlock()
+	fyne.Do(func() {
+		p.publish()
+		p.mu.Lock()
+		same := p.s == s
+		p.mu.Unlock()
+		if same && p.OnEnded != nil {
+			p.OnEnded()
+		}
+	})
+}
+
 // Stop ends playback and goes back to the start.
 func (p *Player) Stop() {
 	p.Pause()
@@ -425,7 +450,7 @@ func (p *Player) menu() *fyne.Menu {
 	subs := fyne.NewMenuItem("Subtitles", nil)
 	subs.ChildMenu = fyne.NewMenu("", items...)
 	menu := fyne.NewMenu("", play, fyne.NewMenuItem("Stop", p.Stop), fyne.NewMenuItemSeparator(), full, rotate, audio, subs)
-	if p.vis.raster.Visible() {
+	if p.vis.showing() {
 		menu.Items = append(menu.Items, fyne.NewMenuItem("Next Visualization", p.vis.next))
 	}
 	return menu
@@ -539,10 +564,7 @@ func (p *Player) work() {
 		if to >= 0 {
 			p.land(s, to, spare)
 		} else if wait, ended := p.advance(s, spare); ended {
-			p.Pause()
-			if p.OnEnded != nil {
-				fyne.Do(p.OnEnded)
-			}
+			p.end(s)
 		} else {
 			// shown now, as it is due, not after the wait for the next one,
 			// which would take its place before the screen had it
