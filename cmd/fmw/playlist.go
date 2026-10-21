@@ -287,7 +287,7 @@ func (pl *playlist) browseAdd() {
 				dialog.ShowFileOpen(func(rc fyne.URIReadCloser, err error) {
 					if err == nil && rc != nil {
 						rc.Close()
-						pl.add([]string{rc.URI().Path()})
+						pl.add([]string{pathOf(rc.URI())})
 					}
 				}, pl.parent())
 			case !errors.Is(err, browse.ErrCancelled):
@@ -391,13 +391,18 @@ func (r *row) DoubleTapped(*fyne.PointEvent) {
 func pathsOf(uris []fyne.URI) []string {
 	paths := make([]string, len(uris))
 	for i, u := range uris {
-		if u.Scheme() == "file" {
-			paths[i] = u.Path()
-		} else {
-			paths[i] = u.String()
-		}
+		paths[i] = pathOf(u)
 	}
 	return paths
+}
+
+// pathOf is what u opens by: a file's path, or the URI of anything else, a
+// link, or the content:// URI Android's pickers give.
+func pathOf(u fyne.URI) string {
+	if u.Scheme() == "file" {
+		return u.Path()
+	}
+	return u.String()
 }
 
 // title is what the window shows while e plays.

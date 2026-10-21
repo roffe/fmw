@@ -267,6 +267,9 @@ type track struct {
 // opening, if not nil, gets the media before the wait for a stream's server,
 // to interrupt it.
 func openMedia(path string, withAudio bool, hwdec string, opening func(*media)) (*media, error) {
+	if err := platformReady(); err != nil {
+		return nil, err
+	}
 	cpath := C.CString(path)
 	defer C.free(unsafe.Pointer(cpath))
 	m := &media{hwdec: hwdec, stop: (*C.int)(C.calloc(1, C.sizeof_int))}

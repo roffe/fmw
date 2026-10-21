@@ -251,7 +251,7 @@ func openFile(w fyne.Window, title string, filters []browse.Filter, open func(st
 						return
 					}
 					rc.Close()
-					open(rc.URI().Path())
+					open(pathOf(rc.URI()))
 				}, w)
 			case !errors.Is(err, browse.ErrCancelled):
 				dialog.ShowError(err, w)

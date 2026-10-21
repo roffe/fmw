@@ -269,6 +269,9 @@ func (m *media) addSubtitles(path string) (int, error) {
 
 // openFile opens path in libavformat, probing what its streams hold if asked.
 func openFile(path string, probe bool) (*C.AVFormatContext, error) {
+	if err := platformReady(); err != nil {
+		return nil, err
+	}
 	cpath := C.CString(path)
 	defer C.free(unsafe.Pointer(cpath))
 	var fc *C.AVFormatContext
