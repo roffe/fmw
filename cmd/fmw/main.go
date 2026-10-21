@@ -43,6 +43,7 @@ func main() {
 	a.Settings().SetTheme(mdi3.New(nil))
 	prefs := a.Preferences()
 	w := a.NewWindow("fmw")
+	w.SetMaster()
 	p := fmw.NewPlayer()
 	p.SetVolume(prefs.FloatWithFallback("volume", 1))
 	a.Lifecycle().SetOnStopped(func() { prefs.SetFloat("volume", p.Volume()) })
