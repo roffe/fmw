@@ -74,6 +74,15 @@ default: linux
 	cmake --install .tmp/projectm-build-linux64
 	mv $@.part $@
 
+# Static, as FFmpeg is for Android. projectM builds for OpenGL ES 3 there.
+.tmp/projectm-android-arm64: .tmp/projectm-src
+	rm -rf $@.part .tmp/projectm-build-android
+	cmake -S .tmp/projectm-src -B .tmp/projectm-build-android $(PROJECTM_CMAKE) -DCMAKE_INSTALL_PREFIX=$(CURDIR)/$@.part -DBUILD_SHARED_LIBS=OFF \
+		-DCMAKE_TOOLCHAIN_FILE=$(NDK)/build/cmake/android.toolchain.cmake -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-$(ANDROID_API)
+	cmake --build .tmp/projectm-build-android -j $(shell nproc)
+	cmake --install .tmp/projectm-build-android
+	mv $@.part $@
+
 # projectM on Windows wants GLEW, shared, as fmw initialises it for projectM.
 # GLEW's own build of it needs no C runtime.
 .tmp/glew-win64:
@@ -152,20 +161,23 @@ windows: .tmp/win64 .tmp/Vulkan-Headers .tmp/projectm-win64 .tmp/presets .tmp/te
 	cp -a .tmp/textures dist/windows/textures
 	cd dist/windows && zip -qr ../fmw_windows_x64.zip *
 
-# Debug signed, as --release needs a keystore. No Vulkan Video on Android, so
-# no zero copy yet. fyne package leaves FyneApp.toml's fyneDo migration out
-# of mobile builds, so its tag is given here.
-android: .tmp/android-arm64
+# Debug signed, as --release needs a keystore, and with go.work's checkouts,
+# ahead of what go.mod pins. No Vulkan Video on Android, so no zero copy yet.
+# fyne package leaves FyneApp.toml's fyneDo migration out of mobile builds,
+# so its tag is given here.
+android: GOWORK=
+android: .tmp/android-arm64 .tmp/projectm-android-arm64
 	mkdir -p dist
 	cp cmd/fmw/FyneApp.toml .tmp/FyneApp.toml # fyne package bumps its Build every run
 	cd cmd/fmw && ANDROID_NDK_HOME=$(NDK) PKG_CONFIG_LIBDIR=$(CURDIR)/.tmp/android-arm64/lib/pkgconfig \
-		CGO_CFLAGS='-O2 -g' \
-		fyne package --os android/arm64 --tags novulkan,migrated_fynedo
+		CGO_CFLAGS="-O2 -g -I$(CURDIR)/.tmp/projectm-android-arm64/include" \
+		CGO_LDFLAGS="-L$(CURDIR)/.tmp/projectm-android-arm64/lib" \
+		fyne package --os android/arm64 --tags novulkan,migrated_fynedo,projectm
 	mv .tmp/FyneApp.toml cmd/fmw/FyneApp.toml
 	mv cmd/fmw/fmw.apk dist/fmw_android_arm64.apk
 
 install-android: android
-	$(ADB) install -r dist/fmw_android_arm64.apk
+	$(ADB) install -r -d dist/fmw_android_arm64.apk
 
 clean:
 	rm -rf .tmp dist

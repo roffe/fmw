@@ -64,8 +64,8 @@ func (v Visualization) seconds() float64 {
 }
 
 // presetDir returns the folder to show presets from: v's, FMW_PRESETS, the
-// presets folder next to the executable, as the releases have it, or the
-// system's.
+// presets folder next to the executable, as the releases have it, the one in
+// the app's storage, as Android has no other, or the system's.
 func (v Visualization) presetDir() string {
 	if v.Presets != "" {
 		return v.Presets
@@ -75,6 +75,11 @@ func (v Visualization) presetDir() string {
 	}
 	if exe, err := os.Executable(); err == nil {
 		if d := filepath.Join(filepath.Dir(exe), "presets"); isDir(d) {
+			return d
+		}
+	}
+	if a := fyne.CurrentApp(); a != nil {
+		if d := filepath.Join(a.Storage().RootURI().Path(), "presets"); isDir(d) {
 			return d
 		}
 	}

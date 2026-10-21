@@ -30,25 +30,36 @@ static void gl_close(void) {
 		eglDestroySurface(dpy, surf);
 	if (ctx != EGL_NO_CONTEXT)
 		eglDestroyContext(dpy, ctx);
+#ifndef __ANDROID__ // the default display, which the app's own GL may use too
 	eglTerminate(dpy);
+#endif
 	dpy = EGL_NO_DISPLAY;
 	ctx = EGL_NO_CONTEXT;
 	surf = EGL_NO_SURFACE;
 }
 
-// open_device makes the context on dev, or reports that it cannot.
-static int open_device(EGLDeviceEXT dev, int w, int h) {
-	dpy = eglGetPlatformDisplay(EGL_PLATFORM_DEVICE_EXT, dev, NULL);
+// open_display makes the context on d, OpenGL 3.3 core, or OpenGL ES 3.0 on
+// Android as projectM builds for it there, or reports that it cannot.
+static int open_display(EGLDisplay d, int w, int h) {
+	dpy = d;
 	if (dpy == EGL_NO_DISPLAY || !eglInitialize(dpy, NULL, NULL)) {
 		dpy = EGL_NO_DISPLAY;
 		return 0;
 	}
+#ifdef __ANDROID__
+	const EGLint ca[] = {EGL_SURFACE_TYPE, EGL_PBUFFER_BIT, EGL_RENDERABLE_TYPE, EGL_OPENGL_ES3_BIT,
+		EGL_RED_SIZE, 8, EGL_GREEN_SIZE, 8, EGL_BLUE_SIZE, 8, EGL_NONE};
+	const EGLint xa[] = {EGL_CONTEXT_MAJOR_VERSION, 3, EGL_NONE};
+	const EGLenum api = EGL_OPENGL_ES_API;
+#else
 	const EGLint ca[] = {EGL_SURFACE_TYPE, EGL_PBUFFER_BIT, EGL_RENDERABLE_TYPE, EGL_OPENGL_BIT,
 		EGL_RED_SIZE, 8, EGL_GREEN_SIZE, 8, EGL_BLUE_SIZE, 8, EGL_NONE};
 	const EGLint xa[] = {EGL_CONTEXT_MAJOR_VERSION, 3, EGL_CONTEXT_MINOR_VERSION, 3,
 		EGL_CONTEXT_OPENGL_PROFILE_MASK, EGL_CONTEXT_OPENGL_CORE_PROFILE_BIT, EGL_NONE};
+	const EGLenum api = EGL_OPENGL_API;
+#endif
 	EGLint n = 0;
-	if (eglChooseConfig(dpy, ca, &cfg, 1, &n) && n > 0 && eglBindAPI(EGL_OPENGL_API) &&
+	if (eglChooseConfig(dpy, ca, &cfg, 1, &n) && n > 0 && eglBindAPI(api) &&
 		(ctx = eglCreateContext(dpy, cfg, EGL_NO_CONTEXT, xa)) != EGL_NO_CONTEXT &&
 		gl_resize(w, h) && gl_load())
 		return 1;
@@ -56,12 +67,20 @@ static int open_device(EGLDeviceEXT dev, int w, int h) {
 	return 0;
 }
 
+// open_device makes the context on dev, or reports that it cannot.
+static int open_device(EGLDeviceEXT dev, int w, int h) {
+	return open_display(eglGetPlatformDisplay(EGL_PLATFORM_DEVICE_EXT, dev, NULL), w, h);
+}
+
 const char *gl_open(int w, int h, const uint8_t *id, int id_len, int *matched) {
+	*matched = 0;
+#ifdef __ANDROID__ // one GPU, and no EGL devices to pick it by
+	return open_display(eglGetDisplay(EGL_DEFAULT_DISPLAY), w, h) ? NULL : "no OpenGL ES 3.0 context";
+#endif
 	PFNEGLQUERYDEVICESEXTPROC devices = (PFNEGLQUERYDEVICESEXTPROC)eglGetProcAddress("eglQueryDevicesEXT");
 	PFNEGLQUERYDEVICESTRINGEXTPROC device_string = (PFNEGLQUERYDEVICESTRINGEXTPROC)eglGetProcAddress("eglQueryDeviceStringEXT");
 	EGLDeviceEXT dev[8];
 	EGLint n = 0;
-	*matched = 0;
 	if (!devices || !device_string || !devices(8, dev, &n) || n == 0)
 		return "no EGL devices";
 	int first = -1;

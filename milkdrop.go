@@ -5,6 +5,7 @@ package fmw
 /*
 #cgo LDFLAGS: -lprojectM-4-playlist -lprojectM-4
 #cgo linux LDFLAGS: -lEGL
+#cgo android LDFLAGS: -lGLESv3
 #cgo windows LDFLAGS: -lglew32 -lopengl32 -lgdi32 -luser32
 #include <stdlib.h>
 #include <projectM-4/projectM.h>
