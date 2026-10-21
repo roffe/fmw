@@ -28,7 +28,7 @@ int gl_resize(int w, int h) {
 	HPBUFFERARB old = pbuffer;
 	HDC old_dc = dc;
 	const int none[] = {0};
-	pbuffer = create_pbuffer(window_dc, format, w, h, none);
+	pbuffer = create_pbuffer(old_dc ? old_dc : window_dc, format, w, h, none);
 	if (!pbuffer) {
 		pbuffer = old;
 		return 0;
@@ -86,6 +86,12 @@ static const char *open_context(int w, int h) {
 			err = "no OpenGL 3.3 context";
 	}
 	wglDeleteContext(first);
+	// a window this thread does not pump would hold up what other programs
+	// send every window, and pbuffers come from each other from now on
+	ReleaseDC(window, window_dc);
+	DestroyWindow(window);
+	window = NULL;
+	window_dc = NULL;
 	if (err)
 		return err;
 	glewExperimental = GL_TRUE; // for a core context

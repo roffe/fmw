@@ -72,7 +72,12 @@ int d3d_signal(d3d_shared *s, uint64_t value) {
 int d3d_wait(d3d_shared *s, uint64_t value, uint32_t ms) {
 	if (ID3D12Fence_GetCompletedValue(s->fence) >= value)
 		return 1;
-	if (ms == 0 || FAILED(ID3D12Fence_SetEventOnCompletion(s->fence, value, s->event)))
+	if (ms == 0)
 		return 0;
-	return WaitForSingleObject(s->event, ms) == WAIT_OBJECT_0;
+	// a wait that timed out leaves the event to be set when its value comes,
+	// so only the fence says whether this one did
+	ResetEvent(s->event);
+	if (SUCCEEDED(ID3D12Fence_SetEventOnCompletion(s->fence, value, s->event)))
+		WaitForSingleObject(s->event, ms);
+	return ID3D12Fence_GetCompletedValue(s->fence) >= value;
 }
