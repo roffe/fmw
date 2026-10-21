@@ -256,8 +256,8 @@ func TestAudioTracks(t *testing.T) {
 	}
 }
 
-// TestControlsRest checks that in full screen the controls and the window's
-// menu hide while the pointer rests on the picture, and come back as it moves.
+// TestControlsRest checks that in full screen the controls, the window's menu
+// and the pointer hide while it rests on the picture, and come back as it moves.
 func TestControlsRest(t *testing.T) {
 	test.NewTempApp(t)
 	p := NewPlayer()
@@ -277,12 +277,12 @@ func TestControlsRest(t *testing.T) {
 	}
 	p.MouseMoved(&desktop.MouseEvent{})
 	rest()
-	if p.bar.Visible() || w.MainMenu() != nil {
-		t.Error("resting on the picture left the controls or the menu showing")
+	if p.bar.Visible() || w.MainMenu() != nil || p.Cursor() != desktop.HiddenCursor {
+		t.Error("resting on the picture left the controls, the menu or the pointer showing")
 	}
 	p.MouseMoved(&desktop.MouseEvent{})
-	if !p.bar.Visible() || w.MainMenu() != menu {
-		t.Error("moving did not bring the controls and the menu back")
+	if !p.bar.Visible() || w.MainMenu() != menu || p.Cursor() != desktop.DefaultCursor {
+		t.Error("moving did not bring the controls, the menu and the pointer back")
 	}
 	p.MouseOut() // onto the controls
 	rest()

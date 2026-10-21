@@ -29,8 +29,8 @@ import (
 // Player is a widget that shows a video with play/pause, stop, seek, volume
 // and full screen controls, subtitles, and a menu on the secondary button.
 // Scrolling over it turns the volume up or down, and a double tap toggles
-// full screen, where the controls and the window's main menu hide while the
-// pointer rests on the picture.
+// full screen, where the controls, the window's main menu and the pointer
+// hide while the pointer rests on the picture.
 // Its methods are safe to call from any goroutine.
 type Player struct {
 	widget.BaseWidget
@@ -153,6 +153,14 @@ func (p *Player) MouseIn(*desktop.MouseEvent) {
 func (p *Player) MouseMoved(*desktop.MouseEvent) {
 	p.overScreen = true
 	p.wake()
+}
+
+// Cursor hides the pointer while the controls are hidden in full screen.
+func (p *Player) Cursor() desktop.Cursor {
+	if p.bar != nil && !p.bar.Visible() {
+		return desktop.HiddenCursor
+	}
+	return desktop.DefaultCursor
 }
 
 // MouseOut keeps the controls showing, as the pointer went to them or away.

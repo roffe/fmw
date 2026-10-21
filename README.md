@@ -16,7 +16,7 @@ It plays whatever FFmpeg can open, decodes on the GPU when there is one, and on 
 - Sound through [oto](https://github.com/ebitengine/oto), every audio track in the file selectable
 - Subtitles: embedded text, PGS and DVD tracks, and external SRT, ASS/SSA, WebVTT, PGS `.sup` and VobSub `.idx`/`.sub` files. Subtitle files named like the video, next to it or in a `Subs` folder, load by themselves
 - Rotation: what phones store in the file, plus whatever you pick in the menu
-- Full screen, with the controls and the window menu hiding when the mouse stops moving
+- Full screen, with the controls, the window menu and the mouse pointer hiding when the mouse stops moving
 - MilkDrop visualizations for music, through projectM (Linux, opt in, see [Visualizations](#visualizations))
 - A playlist window: drop files, folders and M3U playlists on it, open and save playlists, old Winamp ones too
 
