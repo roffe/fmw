@@ -30,7 +30,7 @@ jobs:
 
     - name: Get dependencies
       run: |
-        sudo apt-get update && sudo apt-get install gcc libgl1-mesa-dev libegl1-mesa-dev libgles2-mesa-dev libx11-dev xorg-dev libwayland-dev libxkbcommon-dev
+        sudo apt-get update && sudo apt-get install gcc g++ cmake libgl1-mesa-dev libegl1-mesa-dev libgles2-mesa-dev libx11-dev xorg-dev libwayland-dev libxkbcommon-dev
         go install fyne.io/tools/cmd/fyne@latest
 
     # Windows is cross compiled, with the UCRT like the FFmpeg DLLs

@@ -17,7 +17,7 @@ It plays whatever FFmpeg can open, decodes on the GPU when there is one, and on 
 - Subtitles: embedded text, PGS and DVD tracks, and external SRT, ASS/SSA, WebVTT, PGS `.sup` and VobSub `.idx`/`.sub` files. Subtitle files named like the video, next to it or in a `Subs` folder, load by themselves
 - Rotation: what phones store in the file, plus whatever you pick in the menu
 - Full screen, with the controls, the window menu and the mouse pointer hiding when the mouse stops moving
-- MilkDrop visualizations for music, through projectM (Linux, opt in, see [Visualizations](#visualizations))
+- MilkDrop visualizations for music, through projectM, with 9,795 presets in the releases (see [Visualizations](#visualizations))
 - A playlist window: drop files, folders and M3U playlists on it, open and save playlists, old Winamp ones too
 
 ## Controls
@@ -47,7 +47,7 @@ File > Settings has hardware decoding and the visualization settings. They take 
 
 ## Download
 
-Builds are on the [releases](https://github.com/roffe/fmw/releases) page: an AppImage and a tarball for Linux, a zip for Windows. FFmpeg 9.0 comes with them, so there's nothing else to install. The [nightly](https://github.com/roffe/fmw/releases/tag/nightly) gets built from every push to master.
+Builds are on the [releases](https://github.com/roffe/fmw/releases) page: an AppImage and a tarball for Linux, a zip for Windows. FFmpeg 9.0, projectM and its Cream of the Crop presets come with them, so there's nothing else to install. The [nightly](https://github.com/roffe/fmw/releases/tag/nightly) gets built from every push to master.
 
 ## Using the widget
 
@@ -114,7 +114,7 @@ On Wayland the window icon comes from the installed `.desktop` file, so the icon
 
 To work on Fyne or gowgpu at the same time, clone them next to fmw and `go work init . ../fyne ../gowgpu`.
 
-`make linux`, `make appimage` and `make windows` build what the releases have, into `dist`. They build against FFmpeg 9.0 from [BtbN's builds](https://github.com/BtbN/FFmpeg-Builds) and bundle it, it gets downloaded to `.tmp` the first time along with the Vulkan headers. `make windows` cross compiles with llvm-mingw's `x86_64-w64-mingw32-clang`, `WINCC` picks another compiler.
+`make linux`, `make appimage` and `make windows` build what the releases have, into `dist`. They build against FFmpeg 9.0 from [BtbN's builds](https://github.com/BtbN/FFmpeg-Builds) and bundle it, it gets downloaded to `.tmp` the first time along with the Vulkan headers. They also build projectM 4.1.6 from source with CMake (Windows gets GLEW's own glew32.dll with it) and put the [Cream of the Crop](https://github.com/projectM-visualizer/presets-cream-of-the-crop) presets and the [MilkDrop textures](https://github.com/projectM-visualizer/presets-milkdrop-texture-pack) next to the binary. `make windows` cross compiles with llvm-mingw's `x86_64-w64-mingw32-clang`, `WINCC` and `WINCXX` pick other compilers.
 
 ## Hardware decoding
 
@@ -128,17 +128,17 @@ FMW_HWDEC=vaapi ./fmw movie.mkv
 
 ## Visualizations
 
-Music without a picture, or with just the album cover, gets MilkDrop presets dancing to it through [projectM](https://github.com/projectM-visualizer/projectm). It's opt in and Linux only for now:
+Music without a picture, or with just the album cover, gets MilkDrop presets dancing to it through [projectM](https://github.com/projectM-visualizer/projectm), on Linux and Windows. The releases have it all. Building it yourself takes the `projectm` tag:
 
 ```sh
 go build -tags wayland,migrated_fynedo,projectm ./cmd/fmw
 ```
 
-It needs libprojectM 4 (`libprojectm` on Arch) and presets, by default from `/usr/share/projectM/presets`, where Arch's `projectm` package puts 4000+ of them. Settings or `FMW_PRESETS` point it somewhere else. Right click > Next Visualization cuts to another one, otherwise projectM moves on by itself.
+It needs libprojectM 4 (`libprojectm` on Arch), on Windows GLEW too, and presets: the `presets` folder next to the binary, as the releases have it, or else `/usr/share/projectM/presets`, where Arch's `projectm` package puts 4000+ of them. Settings or `FMW_PRESETS` point it somewhere else. Right click > Next Visualization cuts to another one, otherwise projectM moves on by itself.
 
 Presets get drawn at a fixed size, 1920 x 1080 unless you pick another in Settings, and scaled to cover the player, cut at the sides or the top and bottom when the window has another shape. projectM starts a preset over from black whenever the size it draws at changes, so this way resizing the window or going full screen doesn't.
 
-projectM only speaks OpenGL, so it draws in a headless EGL context of its own. When the painter draws with Vulkan, on the same GPU, the frames never leave it: OpenGL draws into buffers Vulkan shares with it (`GL_EXT_memory_object_fd`) and the painter copies them into its texture. That's 4 to 7% of a core, nearly all of it projectM running the preset's code. Otherwise every frame is read back and uploaded again, around 25%.
+projectM only speaks OpenGL, so it draws in an offscreen context of its own, EGL on Linux, WGL on Windows. When the painter draws with Vulkan, on the same GPU, the frames never leave it: OpenGL draws into buffers Vulkan shares with it (`GL_EXT_memory_object_fd`, `_win32` on Windows) and the painter copies them into its texture. That's 4 to 7% of a core, nearly all of it projectM running the preset's code. Otherwise every frame is read back and uploaded again, around 25%.
 
 ## How fast
 
