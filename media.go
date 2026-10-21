@@ -341,8 +341,8 @@ func (m *media) music() bool {
 
 // open opens a decoder for stream i. Video decodes on Android's MediaCodec
 // where that is wanted, or where no device shared with the painter decodes it
-// with nothing copied, and takes the stream; else on the hardware or the CPU
-// useHardware picks.
+// with nothing copied, and takes the stream, if its frames have presentation
+// times; else on the hardware or the CPU useHardware picks.
 func (m *media) open(i C.int) *track {
 	st := C.stream(m.fc, i)
 	codec := C.avcodec_find_decoder(st.codecpar.codec_id)
@@ -352,13 +352,20 @@ func (m *media) open(i C.int) *track {
 	}
 	if st.codecpar.codec_type == C.AVMEDIA_TYPE_VIDEO && (want == "" || want == "mediacodec") {
 		mc := mediacodecDecoder(st.codecpar.codec_id)
-		if mc != nil && (want == "mediacodec" || codec == nil || !sharesVulkan(codec)) {
+		if mc != nil && m.timed() && (want == "mediacodec" || codec == nil || !sharesVulkan(codec)) {
 			if t := m.openWith(i, mc, "none"); t != nil {
 				return t
 			}
 		}
 	}
 	return m.openWith(i, codec, want)
+}
+
+// timed reports whether the file gives frames presentation times. MediaCodec
+// stamps each frame with its packet's, so where AVI and raw streams give
+// decode order only, frames with B-frames between them come out timed 0.
+func (m *media) timed() bool {
+	return m.fc.iformat.flags&C.AVFMT_NOTIMESTAMPS == 0 && C.GoString(m.fc.iformat.name) != "avi"
 }
 
 // mediacodecDecoder returns FFmpeg's decoder of id that runs on Android's
