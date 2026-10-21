@@ -5,10 +5,10 @@
 #include <stdint.h>
 
 // gl_open makes an OpenGL 3.3 core context current on the calling thread,
-// drawing into a w by h pbuffer, on the GPU with uuid's device and driver
-// UUIDs, as gl_device_uuid gives them, or else on the first that is not a
-// software one. *matched says which.
-const char *gl_open(int w, int h, const uint8_t *uuid, int *matched);
+// drawing into a w by h pbuffer, on the GPU id of id_len bytes names, as
+// gl_device_id gives it, where there is a choice, or else on the first that
+// is not a software one. *matched says whether it is the GPU id names.
+const char *gl_open(int w, int h, const uint8_t *id, int id_len, int *matched);
 
 // gl_resize has the context draw into a w by h pbuffer from now on.
 int gl_resize(int w, int h);
@@ -20,9 +20,10 @@ void *gl_proc(const char *name);
 // it found them all.
 int gl_load(void);
 
-// gl_device_uuid puts the device UUID of the context's GPU in uuid, then its
-// driver's, and reports whether it has GL_EXT_memory_object to tell them.
-int gl_device_uuid(uint8_t uuid[32]);
+// gl_device_id puts what names the context's GPU in id and reports whether
+// the context can tell: for an id_len of 32 its device UUID then its
+// driver's, as Vulkan has them, for 8 its LUID, as Direct3D has it.
+int gl_device_id(uint8_t *id, int id_len);
 
 // gl_has reports whether the context has extension name.
 int gl_has(const char *name);

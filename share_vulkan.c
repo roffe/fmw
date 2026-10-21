@@ -1,6 +1,7 @@
-//go:build linux && projectm && !novulkan
+//go:build (linux || windows) && projectm && !novulkan
 
 #include <string.h>
+#include "milkdrop.h"
 #include "share_vulkan.h"
 
 #ifdef _WIN32
@@ -126,6 +127,19 @@ VkResult vk_shared_make(vk_shared *s, uint64_t size) {
 	if ((r = vk.CreateSemaphore(dev, &si, NULL, &s->semaphore)) != VK_SUCCESS)
 		vk_shared_free(s);
 	return r;
+}
+
+unsigned vk_shared_import(vk_shared *s, uint64_t size, unsigned *memory) {
+#ifdef _WIN32
+	unsigned buffer = gl_import_win32(s->handle, 0x9587 /* GL_HANDLE_TYPE_OPAQUE_WIN32_EXT */, s->allocation, size, memory);
+	CloseHandle(s->handle); // OpenGL keeps its own
+	s->handle = NULL;
+	return buffer;
+#else
+	unsigned buffer = gl_import_fd(s->fd, s->allocation, size, memory);
+	s->fd = -1; // OpenGL took it
+	return buffer;
+#endif
 }
 
 void vk_shared_free(vk_shared *s) {

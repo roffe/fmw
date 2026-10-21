@@ -1,4 +1,4 @@
-//go:build linux && projectm && !novulkan
+//go:build (linux || windows) && projectm && !novulkan
 
 package fmw
 
@@ -12,6 +12,7 @@ import "C"
 import (
 	"errors"
 	"fmt"
+	"runtime"
 	"slices"
 	"sync"
 	"unsafe"
@@ -52,7 +53,7 @@ type slot struct {
 // or nil when there is none, or it cannot export memory.
 func newShare() *share {
 	in, ok := webgpu.VulkanDevice()
-	if !ok || !slices.Contains(in.DeviceExtensions, "VK_KHR_external_memory_fd") || in.Features12.TimelineSemaphore == 0 {
+	if !ok || !slices.Contains(in.DeviceExtensions, externalMemory("VK_KHR_external_memory")) || in.Features12.TimelineSemaphore == 0 {
 		return nil
 	}
 	sh := &share{}
@@ -63,14 +64,15 @@ func newShare() *share {
 	return sh
 }
 
-func (sh *share) uuid() []byte {
+// deviceID is the device's and its driver's UUIDs, as gl_device_id has them.
+func (sh *share) deviceID() []byte {
 	return sh.id[:]
 }
 
 // resize makes the slots frames of w by h go to. The GL context must be
 // current.
 func (sh *share) resize(w, h int) error {
-	if !glHas("GL_EXT_memory_object_fd") {
+	if !glHas(externalMemory("GL_EXT_memory_object")) {
 		return errors.New("OpenGL cannot import memory from Vulkan")
 	}
 	sh.drop()
@@ -98,9 +100,7 @@ func newSlot(w, h int) (*slot, error) {
 	if r := C.vk_shared_make(&s.vk, size); r != C.VK_SUCCESS {
 		return nil, fmt.Errorf("vulkan: no buffer to share with OpenGL: VkResult %d", r)
 	}
-	s.buf = C.gl_import_fd(s.vk.fd, C.uint64_t(s.vk.allocation), size, &s.mem)
-	s.vk.fd = -1 // OpenGL took it
-	if s.buf == 0 {
+	if s.buf = C.vk_shared_import(&s.vk, size, &s.mem); s.buf == 0 {
 		s.free()
 		return nil, errors.New("OpenGL did not import Vulkan's memory")
 	}
@@ -112,6 +112,15 @@ func newSlot(w, h int) (*slot, error) {
 func (s *slot) free() {
 	C.gl_free_shared(s.buf, s.mem)
 	C.vk_shared_free(&s.vk)
+}
+
+// externalMemory is the name of the extension prefix has for the handles
+// memory is shared through on this system.
+func externalMemory(prefix string) string {
+	if runtime.GOOS == "windows" {
+		return prefix + "_win32"
+	}
+	return prefix + "_fd"
 }
 
 // draw has render draw a frame and starts copying it into a slot, and hands

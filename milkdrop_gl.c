@@ -1,4 +1,4 @@
-//go:build linux && projectm
+//go:build (linux || windows) && projectm
 
 #include <string.h>
 #include "milkdrop.h"
@@ -42,6 +42,7 @@ enum {
 	GL_SYNC_FLUSH_COMMANDS_BIT = 0x0001,
 	GL_DEVICE_UUID_EXT = 0x9597,
 	GL_DRIVER_UUID_EXT = 0x9598,
+	GL_DEVICE_LUID_EXT = 0x9599,
 };
 
 static struct {
@@ -117,11 +118,23 @@ int gl_has(const char *name) {
 	return 0;
 }
 
-int gl_device_uuid(uint8_t uuid[32]) {
+int gl_device_id(uint8_t *id, int id_len) {
 	if (!gl_has("GL_EXT_memory_object") || !gl.GetUnsignedBytei_vEXT || !gl.GetUnsignedBytevEXT)
 		return 0;
-	gl.GetUnsignedBytei_vEXT(GL_DEVICE_UUID_EXT, 0, uuid);
-	gl.GetUnsignedBytevEXT(GL_DRIVER_UUID_EXT, uuid + 16);
+	gl.GetError();
+	switch (id_len) {
+	case 32:
+		gl.GetUnsignedBytei_vEXT(GL_DEVICE_UUID_EXT, 0, id);
+		gl.GetUnsignedBytevEXT(GL_DRIVER_UUID_EXT, id + 16);
+		break;
+	case 8:
+		if (!gl_has("GL_EXT_memory_object_win32"))
+			return 0;
+		gl.GetUnsignedBytevEXT(GL_DEVICE_LUID_EXT, id);
+		break;
+	default:
+		return 0;
+	}
 	return gl.GetError() == 0;
 }
 

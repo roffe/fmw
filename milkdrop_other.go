@@ -1,4 +1,4 @@
-//go:build !(linux && projectm)
+//go:build !((linux || windows) && projectm)
 
 package fmw
 

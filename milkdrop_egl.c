@@ -56,7 +56,7 @@ static int open_device(EGLDeviceEXT dev, int w, int h) {
 	return 0;
 }
 
-const char *gl_open(int w, int h, const uint8_t *uuid, int *matched) {
+const char *gl_open(int w, int h, const uint8_t *id, int id_len, int *matched) {
 	PFNEGLQUERYDEVICESEXTPROC devices = (PFNEGLQUERYDEVICESEXTPROC)eglGetProcAddress("eglQueryDevicesEXT");
 	PFNEGLQUERYDEVICESTRINGEXTPROC device_string = (PFNEGLQUERYDEVICESTRINGEXTPROC)eglGetProcAddress("eglQueryDeviceStringEXT");
 	EGLDeviceEXT dev[8];
@@ -71,11 +71,11 @@ const char *gl_open(int w, int h, const uint8_t *uuid, int *matched) {
 			continue;
 		if (first < 0)
 			first = i;
-		if (!uuid)
+		if (!id || id_len > 32)
 			break;
 		uint8_t got[32];
 		if (open_device(dev[i], w, h)) {
-			if (gl_device_uuid(got) && memcmp(got, uuid, 32) == 0) {
+			if (gl_device_id(got, id_len) && memcmp(got, id, id_len) == 0) {
 				*matched = 1;
 				return NULL;
 			}

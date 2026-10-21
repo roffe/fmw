@@ -1,10 +1,11 @@
-//go:build linux && projectm
+//go:build (linux || windows) && projectm
 
 package fmw
 
 /*
 #cgo LDFLAGS: -lprojectM-4-playlist -lprojectM-4
 #cgo linux LDFLAGS: -lEGL
+#cgo windows LDFLAGS: -lglew32 -lopengl32 -lgdi32 -luser32
 #include <stdlib.h>
 #include <projectM-4/projectM.h>
 #include <projectM-4/playlist.h>
@@ -39,12 +40,12 @@ type milkdrop struct {
 // keep the context per milkdrop if two have to show at once.
 func newMilkdrop(w, h int) (*milkdrop, error) {
 	sh := newShare()
-	var uuid *C.uint8_t
+	var id []byte
 	if sh != nil {
-		uuid = (*C.uint8_t)(unsafe.Pointer(&sh.uuid()[0]))
+		id = sh.deviceID()
 	}
 	var matched C.int
-	if e := C.gl_open(C.int(w), C.int(h), uuid, &matched); e != nil {
+	if e := C.gl_open(C.int(w), C.int(h), (*C.uint8_t)(unsafe.SliceData(id)), C.int(len(id)), &matched); e != nil {
 		return nil, errors.New(C.GoString(e))
 	}
 	if sh != nil && matched == 0 {

@@ -21,6 +21,10 @@ int vk_share_init(uintptr_t gipa, uintptr_t inst, uintptr_t pd, uintptr_t dev, u
 // OpenGL, and a timeline semaphore. It returns VK_SUCCESS or why not.
 VkResult vk_shared_make(vk_shared *s, uint64_t size);
 
+// vk_shared_import imports s's memory into OpenGL as a buffer of size bytes
+// and returns it and, in *memory, the memory object, or 0.
+unsigned vk_shared_import(vk_shared *s, uint64_t size, unsigned *memory);
+
 // vk_shared_free frees what vk_shared_make made.
 void vk_shared_free(vk_shared *s);
 
