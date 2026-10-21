@@ -20,7 +20,16 @@ var resolutions = [][2]int{{1280, 720}, {1920, 1080}, {2560, 1440}, {3840, 2160}
 type settings struct {
 	prefs fyne.Preferences
 	p     *fmw.Player
+	main  fyne.Window // for dialogs while the settings window is closed
 	win   fyne.Window
+}
+
+// parent is the window for the settings' dialogs.
+func (s *settings) parent() fyne.Window {
+	if s.win != nil {
+		return s.win
+	}
+	return s.main
 }
 
 func (s *settings) visualization() fmw.Visualization {
@@ -156,9 +165,9 @@ func (s *settings) visualizationCard() fyne.CanvasObject {
 							update(func() { s.prefs.SetString("visualization.presets", u.Path()) })
 							showFolder()
 						}
-					}, s.win)
+					}, s.parent())
 				case !errors.Is(err, browse.ErrCancelled):
-					dialog.ShowError(err, s.win)
+					dialog.ShowError(err, s.parent())
 				}
 			})
 		}()

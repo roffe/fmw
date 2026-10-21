@@ -65,6 +65,7 @@ func TestWriteM3URoundTrip(t *testing.T) {
 	path := filepath.Join(dir, "list.m3u8")
 	list := []entry{
 		{Path: filepath.Join(dir, "sub", "a.mp3"), Title: "A", Seconds: 61},
+		{Path: filepath.Join(dir, "#1 Crush.mp3"), Title: "Crush", Seconds: 213},
 		{Path: "/elsewhere/b.mp3", Seconds: -1},
 		{Path: "https://example.com/c", Title: "C", Seconds: -1},
 	}
@@ -79,7 +80,7 @@ func TestWriteM3URoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	list[1].Title = "b" // the name it was written with
+	list[2].Title = "b" // the name it was written with
 	if !slices.Equal(got, list) {
 		t.Errorf("read back\n%v\nwant\n%v", got, list)
 	}

@@ -44,7 +44,7 @@ func main() {
 	p := fmw.NewPlayer()
 	p.SetVolume(prefs.FloatWithFallback("volume", 1))
 	a.Lifecycle().SetOnStopped(func() { prefs.SetFloat("volume", p.Volume()) })
-	set := &settings{prefs: prefs, p: p}
+	set := &settings{prefs: prefs, p: p, main: w}
 	set.apply()
 	load := func(e entry) error {
 		if err := p.Load(e.Path); err != nil {

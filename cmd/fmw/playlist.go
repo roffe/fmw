@@ -276,18 +276,18 @@ func (pl *playlist) browseAdd() {
 						rc.Close()
 						pl.add([]string{rc.URI().Path()})
 					}
-				}, pl.win)
+				}, pl.parent())
 			case !errors.Is(err, browse.ErrCancelled):
-				dialog.ShowError(err, pl.win)
+				dialog.ShowError(err, pl.parent())
 			}
 		})
 	}()
 }
 
 func (pl *playlist) browseOpen() {
-	openFile(pl.win, "Open playlist", playlists, func(path string) {
+	openFile(pl.parent(), "Open playlist", playlists, func(path string) {
 		if err := pl.open(path); err != nil {
-			dialog.ShowError(err, pl.win)
+			dialog.ShowError(err, pl.parent())
 		}
 	})
 }
@@ -298,7 +298,7 @@ func (pl *playlist) browseSave() {
 			path += ".m3u8"
 		}
 		if err := writeM3U(path, pl.entries); err != nil {
-			dialog.ShowError(err, pl.win)
+			dialog.ShowError(err, pl.parent())
 		}
 	}
 	o := browse.Options{Title: "Save playlist", Name: "playlist.m3u8", Filters: playlists, Parent: nativeHandle(pl.win)}
@@ -314,11 +314,11 @@ func (pl *playlist) browseSave() {
 						wc.Close()
 						save(wc.URI().Path())
 					}
-				}, pl.win)
+				}, pl.parent())
 				d.SetFileName("playlist.m3u8")
 				d.Show()
 			case !errors.Is(err, browse.ErrCancelled):
-				dialog.ShowError(err, pl.win)
+				dialog.ShowError(err, pl.parent())
 			}
 		})
 	}()

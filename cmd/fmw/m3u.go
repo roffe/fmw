@@ -125,6 +125,9 @@ func writeM3U(path string, list []entry) error {
 		p := e.Path
 		if rel, err := filepath.Rel(dir, p); err == nil && !isURL(p) && filepath.IsAbs(p) && filepath.IsLocal(rel) {
 			p = filepath.ToSlash(rel)
+			if strings.HasPrefix(p, "#") { // not a comment
+				p = "./" + p
+			}
 		}
 		b.WriteString(p + "\n")
 	}
