@@ -88,6 +88,8 @@ static void lock_frame(const AVFrame *f, int lock) {
 import "C"
 
 import (
+	"slices"
+	"strings"
 	"sync"
 	"unsafe"
 
@@ -133,10 +135,15 @@ func newVulkanDevice(in *vulkan.Interop) *C.AVBufferRef {
 	for _, q := range in.QueueFamilies {
 		qf = append(qf, C.int(q.Index), C.int(q.Count), C.int(q.Flags))
 	}
+	// without the ones exporting memory, which FFmpeg would make every frame
+	// exportable for, which it was not tried with
+	exts := slices.DeleteFunc(slices.Clone(in.DeviceExtensions), func(e string) bool {
+		return strings.HasPrefix(e, "VK_KHR_external_memory_")
+	})
 	return C.vulkan_device(C.uintptr_t(in.GetInstanceProcAddr),
 		C.uintptr_t(in.Instance), C.uintptr_t(in.PhysicalDevice), C.uintptr_t(in.Device),
 		cstrings(in.InstanceExtensions), C.int(min(len(in.InstanceExtensions), 64)),
-		cstrings(in.DeviceExtensions), C.int(min(len(in.DeviceExtensions), 64)),
+		cstrings(exts), C.int(min(len(exts), 64)),
 		(*C.VkPhysicalDeviceFeatures)(unsafe.Pointer(&in.Features)),
 		(*C.VkPhysicalDeviceVulkan11Features)(unsafe.Pointer(&in.Features11)),
 		(*C.VkPhysicalDeviceVulkan12Features)(unsafe.Pointer(&in.Features12)),
