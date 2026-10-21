@@ -21,6 +21,7 @@ import (
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/driver/desktop"
+	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 	"github.com/ebitengine/oto/v3"
@@ -30,7 +31,8 @@ import (
 // and full screen controls, subtitles, and a menu on the secondary button.
 // Scrolling over it turns the volume up or down, and a double tap toggles
 // full screen, where the controls, the window's main menu and the pointer
-// hide while the pointer rests on the picture.
+// hide while the pointer rests on the picture. On a touch screen they hide
+// while a video plays untouched, and a tap on the picture shows or hides them.
 // Its methods are safe to call from any goroutine.
 type Player struct {
 	widget.BaseWidget
@@ -111,11 +113,17 @@ func NewPlayer() *Player {
 	p.stop = widget.NewButtonWithIcon("", theme.MediaStopIcon(), p.Stop)
 	p.seek = widget.NewSlider(0, 1)
 	p.seek.Step = 0
-	p.seek.OnChanged = func(v float64) { p.Seek(seconds(v)) }
+	p.seek.OnChanged = func(v float64) {
+		p.wake()
+		p.Seek(seconds(v))
+	}
 	p.volume = widget.NewSlider(0, 1)
 	p.volume.Step = 0
 	p.volume.Value = 1
-	p.volume.OnChanged = p.SetVolume
+	p.volume.OnChanged = func(v float64) {
+		p.wake()
+		p.SetVolume(v)
+	}
 	unfocus := func(float64) { // so keys such as Space reach the window, the sliders do nothing with them
 		if c := fyne.CurrentApp().Driver().CanvasForObject(p); c != nil {
 			c.Unfocus()
@@ -134,13 +142,27 @@ func NewPlayer() *Player {
 
 // CreateRenderer is a private method to Fyne which links this widget to its renderer.
 func (p *Player) CreateRenderer() fyne.WidgetRenderer {
-	vol := container.NewGridWrap(fyne.NewSize(100, p.volume.MinSize().Height), p.volume)
+	vol := container.NewGridWrap(fyne.Size{}, p.volume)
 	p.bar = container.NewBorder(nil, nil,
-		container.NewHBox(p.play, p.stop, p.times),
+		container.NewHBox(p.play, p.stop, container.NewCenter(p.times)),
 		container.NewHBox(widget.NewIcon(theme.VolumeUpIcon()), vol, p.full),
 		p.seek)
+	if fyne.CurrentDevice().IsMobile() {
+		p.bar = container.NewThemeOverride(p.bar, touchTheme{})
+	}
+	vol.Layout = layout.NewGridWrapLayout(fyne.NewSize(100, p.volume.MinSize().Height)) // as themed
 	screen := container.NewStack(canvas.NewRectangle(color.Black), p.screen, p.vis.raster, p.vis.frame, p.subs)
 	return widget.NewSimpleRenderer(container.NewBorder(nil, p.bar, nil, nil, screen))
+}
+
+// Tapped on the picture of a touch screen hides the controls, and elsewhere
+// shows them for a while.
+func (p *Player) Tapped(ev *fyne.PointEvent) {
+	if fyne.CurrentDevice().IsMobile() && p.bar.Visible() && ev.Position.Y < p.bar.Position().Y {
+		p.showControls(false)
+		return
+	}
+	p.wake()
 }
 
 // DoubleTapped toggles full screen.
@@ -176,21 +198,28 @@ func (p *Player) MouseOut() {
 
 const restDelay = 2 * time.Second
 
-// wake shows the controls and, in full screen, has them hide once the pointer
-// rests for restDelay.
+// wake shows the controls and, in full screen or on a touch screen, has them
+// hide once the pointer or the finger rests for restDelay.
 func (p *Player) wake() {
 	p.moved = time.Now()
 	p.showControls(true)
 	if p.idle != nil {
 		p.idle.Stop()
 	}
-	if w := p.window(); w != nil && w.FullScreen() {
+	if w := p.window(); fyne.CurrentDevice().IsMobile() || w != nil && w.FullScreen() {
 		p.idle = time.AfterFunc(restDelay, func() { fyne.Do(p.rest) })
 	}
 }
 
 func (p *Player) rest() {
-	if w := p.window(); w != nil && w.FullScreen() && p.overScreen && time.Since(p.moved) >= restDelay {
+	if time.Since(p.moved) < restDelay {
+		return
+	}
+	if fyne.CurrentDevice().IsMobile() {
+		if p.playingVideo() {
+			p.showControls(false)
+		}
+	} else if w := p.window(); w != nil && w.FullScreen() && p.overScreen {
 		p.showControls(false)
 	}
 }
@@ -596,6 +625,13 @@ func (p *Player) Playing() bool {
 	return p.playing
 }
 
+// playingVideo reports whether a video plays, rather than music or nothing.
+func (p *Player) playingVideo() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.playing && p.s != nil && !p.s.m.music()
+}
+
 // TogglePlay pauses the video if it is playing and plays it otherwise.
 func (p *Player) TogglePlay() {
 	if p.Playing() {
@@ -809,6 +845,9 @@ func (p *Player) publish() {
 	}
 	if p.playing != p.shownPlaying {
 		p.shownPlaying = p.playing
+		if fyne.CurrentDevice().IsMobile() {
+			p.wake() // the controls hide while a video plays, and show when it stops
+		}
 		if p.playing {
 			p.play.SetIcon(theme.MediaPauseIcon())
 		} else {
@@ -847,4 +886,26 @@ func clock(s float64) string {
 		return fmt.Sprintf("%d:%02d:%02d", t/3600, t/60%60, t%60)
 	}
 	return fmt.Sprintf("%d:%02d", t/60, t%60)
+}
+
+// touchTheme is the app's theme with the inline icons, which size buttons and
+// the thumbs of sliders and how tall they are, big enough for a finger. It
+// asks the app's settings, as theme.Current is this theme while it renders.
+type touchTheme struct{}
+
+func appTheme() fyne.Theme { return fyne.CurrentApp().Settings().Theme() }
+
+func (touchTheme) Color(n fyne.ThemeColorName, v fyne.ThemeVariant) color.Color {
+	return appTheme().Color(n, v)
+}
+
+func (touchTheme) Font(s fyne.TextStyle) fyne.Resource { return appTheme().Font(s) }
+
+func (touchTheme) Icon(n fyne.ThemeIconName) fyne.Resource { return appTheme().Icon(n) }
+
+func (touchTheme) Size(n fyne.ThemeSizeName) float32 {
+	if n == theme.SizeNameInlineIcon {
+		return 1.6 * appTheme().Size(n)
+	}
+	return appTheme().Size(n)
 }
