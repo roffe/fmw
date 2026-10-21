@@ -10,7 +10,7 @@ It plays whatever FFmpeg can open, decodes on the GPU when there is one, and on 
 
 - Plays pretty much anything FFmpeg opens, files and the URLs FFmpeg can stream
 - Hardware decoding through FFmpeg: NVDEC, VA-API, VDPAU, Vulkan Video, D3D11, VideoToolbox. Falls back to the CPU for what the GPU can't do
-- Zero copy on Linux. When Fyne's WebGPU painter runs on Vulkan, FFmpeg decodes with Vulkan Video on the same GPU device the window draws with, and the painter copies the picture GPU side. No trip through RAM
+- Zero copy. When Fyne's WebGPU painter runs on Vulkan, FFmpeg decodes with Vulkan Video on the same GPU device the window draws with, and the painter copies the picture GPU side. No trip through RAM. On Windows the same goes for Direct3D 12 with D3D12 video, 8-bit video for now
 - YUV to RGB on the GPU, 8 and 10-bit, BT.601, BT.709 and BT.2020
 - HDR10 and HLG tone mapped to SDR (BT.2390), using the peak brightness in the file
 - Sound through [oto](https://github.com/ebitengine/oto), every audio track in the file selectable
@@ -118,7 +118,7 @@ To work on Fyne or gowgpu at the same time, clone them next to fmw and `go work 
 
 ## Hardware decoding
 
-By default fmw decodes with Vulkan Video on the window's own GPU device when the painter runs on Vulkan, and otherwise on the first kind of device FFmpeg's decoder knows that the machine has. `FMW_HWDEC` picks one by FFmpeg's name for it:
+By default fmw decodes with Vulkan Video on the window's own GPU device when the painter runs on Vulkan, with D3D12 video on it when the painter runs on Direct3D 12, and otherwise on the first kind of device FFmpeg's decoder knows that the machine has. File > Settings or `FMW_HWDEC` picks one by FFmpeg's name for it:
 
 ```sh
 FMW_HWDEC=none ./fmw movie.mkv    # CPU only
@@ -154,13 +154,13 @@ At 8K60 zero copy shows all 60 frames a second, going through RAM only manages 2
 
 ## Status
 
-Tested on Linux, KDE Plasma on Wayland with NVIDIA. Windows and macOS haven't been tried yet. They should decode on the GPU there too (D3D11, VideoToolbox), with the frames going through RAM.
+Tested on Linux, KDE Plasma on Wayland with NVIDIA. Windows has only been run under wine so far, Vulkan zero copy of the visualizations included; the Direct3D 12 paths compile but haven't met a real Windows GPU. macOS hasn't been tried, it should decode on the GPU there too (VideoToolbox), with the frames going through RAM, and has no visualizations.
 
 Known limits:
 
 - ASS/SSA subtitles show as plain text, their styles and positions are dropped
 - HDR is tone mapped to SDR, there's no HDR output yet
-- Zero copy is Linux only for now. Windows paints with DX12 by default, which needs D3D12 video decoding, that's next on the list
+- 10-bit video goes through RAM when the painter runs on Direct3D 12: its copies won't take P010's planes to the formats the painter samples them as
 - AV1 decodes on the CPU with dav1d
 
 ## Tests
