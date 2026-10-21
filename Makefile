@@ -1,4 +1,4 @@
-.PHONY: linux linux-static appimage windows android install-android clean
+.PHONY: deps linux linux-static appimage windows macos android install-android clean
 
 VERSION=$(shell sed -n 's/^Version = "\(.*\)"/\1/p' cmd/fmw/FyneApp.toml)
 FFMPEG=https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n9.0-latest
@@ -22,6 +22,7 @@ NDK?=$(HOME)/Android/android-ndk-r30
 NDKBIN=$(NDK)/toolchains/llvm/prebuilt/linux-x86_64/bin
 ANDROID_API=21
 ADB?=$(HOME)/Android/platform-tools/adb
+NPROC=$(shell nproc 2>/dev/null || sysctl -n hw.ncpu)
 MIMETYPES=video/mp4;video/x-matroska;video/mpeg;video/ogg;video/quicktime;video/vnd.avi;video/mp2t;video/webm;video/x-ms-wmv;audio/aac;audio/ac3;audio/flac;audio/mp4;audio/mpeg;audio/ogg;audio/vnd.wave;audio/webm;audio/x-matroska;audio/x-mpegurl;
 
 # The releases build against FFmpeg from BtbN and projectM built here, and
@@ -30,6 +31,12 @@ export GOWORK=off
 export CGO_CFLAGS=-O2 -g -I$(CURDIR)/.tmp/Vulkan-Headers/include
 
 default: linux
+
+ifeq ($(shell uname -s),Darwin)
+deps: .tmp/macos
+else
+deps: .tmp/linux64 .tmp/Vulkan-Headers .tmp/projectm-linux64 .tmp/presets .tmp/textures
+endif
 
 .tmp/linux64:
 	rm -rf $@.part
@@ -56,9 +63,24 @@ default: linux
 		--ar=$(NDKBIN)/llvm-ar --nm=$(NDKBIN)/llvm-nm --ranlib=$(NDKBIN)/llvm-ranlib --strip=$(NDKBIN)/llvm-strip \
 		--enable-static --disable-shared --enable-pic --enable-jni --enable-mediacodec --enable-vulkan --extra-cflags=-I$(CURDIR)/.tmp/Vulkan-Headers/include \
 		--disable-programs --disable-doc --disable-avdevice --disable-avfilter
-	$(MAKE) -C .tmp/ffmpeg-android -j$(shell nproc) install
+	$(MAKE) -C .tmp/ffmpeg-android -j$(NPROC) install
 	sed -i 's|$(CURDIR)/$@.part|$${pcfiledir}/../..|' $@.part/lib/pkgconfig/*.pc
 	cp .tmp/ffmpeg-android/COPYING.LGPLv2.1 $@.part/LICENSE.txt
+	mv $@.part $@
+
+# BtbN has no macOS builds either. Static, so fmw needs no FFmpeg installed.
+# configure finds VideoToolbox for hardware decoding and Secure Transport for
+# https by itself.
+.tmp/macos:
+	rm -rf $@.part .tmp/ffmpeg-macos
+	mkdir -p .tmp/ffmpeg-macos
+	curl -fsSL $(FFMPEG_SRC) | tar -xJ --strip-components=1 -C .tmp/ffmpeg-macos
+	cd .tmp/ffmpeg-macos && ./configure --prefix=$(CURDIR)/$@.part --enable-static --disable-shared --enable-pic \
+		--disable-programs --disable-doc --disable-avdevice --disable-avfilter --disable-encoders --disable-muxers
+	$(MAKE) -C .tmp/ffmpeg-macos -j$(NPROC) install
+	sed -i.bak 's|$(CURDIR)/$@.part|$${pcfiledir}/../..|g' $@.part/lib/pkgconfig/*.pc
+	rm $@.part/lib/pkgconfig/*.bak
+	cp .tmp/ffmpeg-macos/COPYING.LGPLv2.1 $@.part/LICENSE.txt
 	mv $@.part $@
 
 # FFmpeg for make linux-static, with only what fmw needs to play files and
@@ -85,7 +107,7 @@ default: linux
 	ninja -C .tmp/static-src/va/build install
 	$(MAKE) -C .tmp/static-src/nvcodec PREFIX=$(CURDIR)/$@.part install
 	cd .tmp/static-src/openssl && ./Configure linux-x86_64 no-shared no-tests --prefix=$(CURDIR)/$@.part --libdir=lib --openssldir=/etc/ssl
-	$(MAKE) -C .tmp/static-src/openssl -j$(shell nproc) build_libs
+	$(MAKE) -C .tmp/static-src/openssl -j$(NPROC) build_libs
 	$(MAKE) -C .tmp/static-src/openssl install_dev
 	cd .tmp/static-src/ffmpeg && PKG_CONFIG_PATH=$(CURDIR)/$@.part/lib/pkgconfig ./configure --prefix=$(CURDIR)/$@.part --pkg-config-flags=--static \
 		--enable-static --disable-shared --enable-pic --enable-version3 --disable-autodetect --disable-programs --disable-doc \
@@ -93,7 +115,7 @@ default: linux
 		--enable-pthreads --enable-zlib --enable-iconv --enable-openssl --enable-libdav1d \
 		--enable-libdrm --enable-vaapi --enable-ffnvcodec --enable-cuda --enable-nvdec --enable-vulkan \
 		--extra-cflags=-I$(CURDIR)/.tmp/Vulkan-Headers/include
-	$(MAKE) -C .tmp/static-src/ffmpeg -j$(shell nproc) install
+	$(MAKE) -C .tmp/static-src/ffmpeg -j$(NPROC) install
 	sed -i 's|$(CURDIR)/$@.part|$${pcfiledir}/../..|g' $@.part/lib/pkgconfig/*.pc
 	cp .tmp/static-src/ffmpeg/COPYING.LGPLv3 $@.part/licenses/FFmpeg-LICENSE.txt
 	cp .tmp/static-src/dav1d/COPYING $@.part/licenses/dav1d-LICENSE.txt
@@ -118,14 +140,14 @@ default: linux
 .tmp/projectm-linux64: .tmp/projectm-src
 	rm -rf $@.part .tmp/projectm-build-linux64
 	cmake -S .tmp/projectm-src -B .tmp/projectm-build-linux64 $(PROJECTM_CMAKE) -DCMAKE_INSTALL_PREFIX=$(CURDIR)/$@.part
-	cmake --build .tmp/projectm-build-linux64 -j $(shell nproc)
+	cmake --build .tmp/projectm-build-linux64 -j $(NPROC)
 	cmake --install .tmp/projectm-build-linux64
 	mv $@.part $@
 
 .tmp/projectm-static-linux64: .tmp/projectm-src
 	rm -rf $@.part .tmp/projectm-build-static-linux64
 	cmake -S .tmp/projectm-src -B .tmp/projectm-build-static-linux64 $(PROJECTM_CMAKE) -DCMAKE_INSTALL_PREFIX=$(CURDIR)/$@.part -DBUILD_SHARED_LIBS=OFF
-	cmake --build .tmp/projectm-build-static-linux64 -j $(shell nproc)
+	cmake --build .tmp/projectm-build-static-linux64 -j $(NPROC)
 	cmake --install .tmp/projectm-build-static-linux64
 	mv $@.part $@
 
@@ -134,7 +156,7 @@ default: linux
 	rm -rf $@.part .tmp/projectm-build-android
 	cmake -S .tmp/projectm-src -B .tmp/projectm-build-android $(PROJECTM_CMAKE) -DCMAKE_INSTALL_PREFIX=$(CURDIR)/$@.part -DBUILD_SHARED_LIBS=OFF \
 		-DCMAKE_TOOLCHAIN_FILE=$(NDK)/build/cmake/android.toolchain.cmake -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-$(ANDROID_API)
-	cmake --build .tmp/projectm-build-android -j $(shell nproc)
+	cmake --build .tmp/projectm-build-android -j $(NPROC)
 	cmake --install .tmp/projectm-build-android
 	mv $@.part $@
 
@@ -159,7 +181,7 @@ default: linux
 	cmake -S .tmp/projectm-src -B .tmp/projectm-build-win64 $(PROJECTM_CMAKE) -DCMAKE_INSTALL_PREFIX=$(CURDIR)/$@.part \
 		-DCMAKE_SYSTEM_NAME=Windows -DCMAKE_C_COMPILER=$(WINCC) -DCMAKE_CXX_COMPILER=$(WINCXX) -DCMAKE_SHARED_LINKER_FLAGS=-static -DCMAKE_CXX_FLAGS=-DprojectM_playlist_EXPORTS \
 		-DGLEW_INCLUDE_DIR=$(CURDIR)/.tmp/glew-win64/include -DGLEW_SHARED_LIBRARY_RELEASE=$(CURDIR)/.tmp/glew-win64/lib/glew32.lib
-	cmake --build .tmp/projectm-build-win64 -j $(shell nproc)
+	cmake --build .tmp/projectm-build-win64 -j $(NPROC)
 	cmake --install .tmp/projectm-build-win64
 	mv $@.part $@
 
@@ -232,6 +254,13 @@ windows: .tmp/win64 .tmp/Vulkan-Headers .tmp/projectm-win64 .tmp/presets .tmp/te
 	cp -a .tmp/presets dist/windows/presets
 	cp -a .tmp/textures dist/windows/textures
 	cd dist/windows && zip -qr ../fmw_windows_x64.zip *
+
+# No visualizations, fmw makes no GL context for projectM on macOS
+macos: .tmp/macos
+	rm -rf dist/macos
+	mkdir -p dist/macos
+	cd cmd/fmw && PKG_CONFIG_PATH=$(CURDIR)/.tmp/macos/lib/pkgconfig fyne build --release -o $(CURDIR)/dist/macos/fmw
+	cp .tmp/macos/LICENSE.txt dist/macos/FFmpeg-LICENSE.txt
 
 # Debug signed, as --release needs a keystore, and with go.work's checkouts,
 # ahead of what go.mod pins. Video decodes with zero copy where the GPU has
