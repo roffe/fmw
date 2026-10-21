@@ -38,7 +38,7 @@ static int rotation(const AVStream *st) {
 static int to_planes(SwsContext **s, AVFrame *dst, AVFrame *own, const AVFrame *f) {
 	av_frame_unref(dst);
 	int fmt = f->format;
-	if (fmt == AV_PIX_FMT_VULKAN || fmt == AV_PIX_FMT_D3D12) // one stays_on_gpu kept there
+	if (fmt == AV_PIX_FMT_VULKAN || fmt == AV_PIX_FMT_D3D12 || fmt == AV_PIX_FMT_VIDEOTOOLBOX) // one stays_on_gpu kept there
 		return av_frame_ref(dst, f);
 	int nv = fmt == AV_PIX_FMT_NV12 || fmt == AV_PIX_FMT_P010LE;
 	if ((nv || fmt == AV_PIX_FMT_YUV420P || fmt == AV_PIX_FMT_YUVJ420P || fmt == AV_PIX_FMT_YUV420P10LE) &&
@@ -120,11 +120,13 @@ static void use_hw(AVCodecContext *c, AVBufferRef *dev, enum AVPixelFormat fmt) 
 }
 
 // stays_on_gpu reports whether f, a frame in video memory, is one painters
-// copy from there themselves: a Vulkan image of NV12 or P010, or a Direct3D
-// 12 texture of NV12, as copies take P010's planes to no format painters have.
+// copy from there themselves: a Vulkan image or VideoToolbox IOSurface of
+// NV12 or P010, or a Direct3D 12 texture of NV12, as copies take P010's
+// planes to no format painters have there.
 static int stays_on_gpu(const AVFrame *f) {
 	enum AVPixelFormat sw = ((AVHWFramesContext *)f->hw_frames_ctx->data)->sw_format;
-	return f->format == AV_PIX_FMT_VULKAN && (sw == AV_PIX_FMT_NV12 || sw == AV_PIX_FMT_P010LE) ||
+	int nv = sw == AV_PIX_FMT_NV12 || sw == AV_PIX_FMT_P010LE;
+	return (f->format == AV_PIX_FMT_VULKAN || f->format == AV_PIX_FMT_VIDEOTOOLBOX) && nv ||
 		f->format == AV_PIX_FMT_D3D12 && sw == AV_PIX_FMT_NV12;
 }
 
@@ -478,7 +480,8 @@ func decodeThreads(w, h int) C.int {
 // hardware support, and FFmpeg's own one has no CPU fallback.
 func (t *track) useHardware(codec *C.AVCodec, want string) {
 	if (want == "" || want == "vulkan") && t.useSharedVulkan(codec) ||
-		(want == "" || want == "d3d12va") && t.useSharedD3D12(codec) {
+		(want == "" || want == "d3d12va") && t.useSharedD3D12(codec) ||
+		(want == "" || want == "videotoolbox") && t.useSharedVideoToolbox(codec) {
 		return
 	}
 	for i := C.int(0); want != "none"; i++ {
@@ -600,6 +603,7 @@ func (m *media) show(dst *picture) bool {
 }
 
 func (m *media) hold(dst *picture) {
+	dst.fence.wait()
 	if C.to_planes(&m.sws, dst.f, dst.own, m.video.last) < 0 {
 		C.av_frame_unref(dst.f)
 	}
@@ -692,9 +696,10 @@ func (m *media) decode(t *track) bool {
 		ret := C.avcodec_receive_frame(t.cc, t.frame)
 		if ret == 0 && t.frame.hw_frames_ctx != nil {
 			if t.gpu && C.stays_on_gpu(t.frame) != 0 {
-				if t.frame.format == C.AV_PIX_FMT_D3D12 {
+				switch t.frame.format { // VideoToolbox's are done
+				case C.AV_PIX_FMT_D3D12:
 					waitD3D12(t.frame)
-				} else {
+				case C.AV_PIX_FMT_VULKAN:
 					waitDecoded(t.frame)
 				}
 			} else {
@@ -777,6 +782,7 @@ type picture struct {
 	aspect   float32
 	rotation int
 	peak     float64
+	fence    copyFence
 }
 
 func newPicture() *picture {
@@ -784,6 +790,7 @@ func newPicture() *picture {
 }
 
 func (pic *picture) free() {
+	pic.fence.free()
 	C.av_frame_free(&pic.f)
 	C.av_frame_free(&pic.own)
 }
@@ -802,6 +809,8 @@ func (pic *picture) show(v *canvas.VideoFrame, turn int) {
 		pic.showImage(v)
 	} else if f.format == C.AV_PIX_FMT_D3D12 {
 		pic.showD3D12(v)
+	} else if f.format == C.AV_PIX_FMT_VIDEOTOOLBOX {
+		pic.showSurface(v)
 	} else {
 		ch := (h + 1) / 2
 		plane := func(i, rows int) []byte {
