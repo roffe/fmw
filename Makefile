@@ -22,6 +22,7 @@ NDK?=$(HOME)/Android/android-ndk-r30
 NDKBIN=$(NDK)/toolchains/llvm/prebuilt/linux-x86_64/bin
 ANDROID_API=21
 ADB?=$(HOME)/Android/platform-tools/adb
+MIMETYPES=video/mp4;video/x-matroska;video/mpeg;video/ogg;video/quicktime;video/vnd.avi;video/mp2t;video/webm;video/x-ms-wmv;audio/aac;audio/ac3;audio/flac;audio/mp4;audio/mpeg;audio/ogg;audio/vnd.wave;audio/webm;audio/x-matroska;audio/x-mpegurl;
 
 # The releases build against FFmpeg from BtbN and projectM built here, and
 # bundle them, not the system's
@@ -213,7 +214,7 @@ appimage: linux .tmp/appimagetool
 	ln -s fmw .tmp/AppDir/AppRun
 	cp logo.png .tmp/AppDir/com.roffe.fmw.png
 	ln -s com.roffe.fmw.png .tmp/AppDir/.DirIcon
-	printf '[Desktop Entry]\nType=Application\nName=fmw\nExec=fmw %%f\nIcon=com.roffe.fmw\nCategories=AudioVideo;Video;Player;\n' > .tmp/AppDir/com.roffe.fmw.desktop
+	printf '[Desktop Entry]\nType=Application\nName=fmw\nExec=fmw %%F\nIcon=com.roffe.fmw\nCategories=AudioVideo;Video;Player;\nMimeType=$(MIMETYPES)\n' > .tmp/AppDir/com.roffe.fmw.desktop
 	ARCH=x86_64 VERSION=$(VERSION) .tmp/appimagetool --appimage-extract-and-run --no-appstream .tmp/AppDir dist/fmw-x86_64.AppImage
 
 windows: .tmp/win64 .tmp/Vulkan-Headers .tmp/projectm-win64 .tmp/presets .tmp/textures
