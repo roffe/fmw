@@ -475,8 +475,9 @@ func decodeThreads(w, h int) C.int {
 	return C.int(min(max(w*h/500_000, 2), 8, runtime.NumCPU()))
 }
 
-// useHardware has t decode on the kind of device want names, or else on the
-// first kind its decoder knows that this machine has. AV1 stays on the CPU: its default decoder, dav1d, has no
+// useHardware has t decode on the kind of device want names, or else on
+// NVDEC where that decodes it, else on the first kind its decoder knows that
+// this machine has. AV1 stays on the CPU: its default decoder, dav1d, has no
 // hardware support, and FFmpeg's own one has no CPU fallback.
 func (t *track) useHardware(codec *C.AVCodec, want string) {
 	if (want == "" || want == "vulkan") && t.useSharedVulkan(codec) ||
@@ -484,24 +485,40 @@ func (t *track) useHardware(codec *C.AVCodec, want string) {
 		(want == "" || want == "videotoolbox") && t.useSharedVideoToolbox(codec) {
 		return
 	}
-	for i := C.int(0); want != "none"; i++ {
+	if want == "none" {
+		return
+	}
+	// NVIDIA's VAAPI driver decodes on NVDEC and gets VP8 wrong, and VP8's
+	// decoder is the one that lists VAAPI ahead of NVDEC
+	if want == "" && t.useKind(codec, "cuda") {
+		return
+	}
+	t.useKind(codec, want)
+}
+
+// useKind has t decode on the kind of device FFmpeg calls kind, or when kind
+// is empty on the first kind its decoder knows that this machine has, and
+// reports whether it does.
+func (t *track) useKind(codec *C.AVCodec, kind string) bool {
+	for i := C.int(0); ; i++ {
 		cfg := C.avcodec_get_hw_config(codec, i)
 		if cfg == nil {
-			return
+			return false
 		}
 		name := C.GoString(C.av_hwdevice_get_type_name(cfg.device_type))
-		if cfg.methods&C.AV_CODEC_HW_CONFIG_METHOD_HW_DEVICE_CTX == 0 || want != "" && want != name {
+		if cfg.methods&C.AV_CODEC_HW_CONFIG_METHOD_HW_DEVICE_CTX == 0 || kind != "" && kind != name {
 			continue
 		}
-		// Vulkan picked by itself decodes on the painter's device, above. A
-		// device of FFmpeg's own comes up without video queues too, and the
-		// decoder then falls back to the CPU with the threads cut for it.
-		if want == "" && cfg.device_type == C.AV_HWDEVICE_TYPE_VULKAN {
+		// Vulkan picked by itself decodes on the painter's device, in
+		// useHardware. A device of FFmpeg's own comes up without video
+		// queues too, and the decoder then falls back to the CPU with the
+		// threads cut for it.
+		if kind == "" && cfg.device_type == C.AV_HWDEVICE_TYPE_VULKAN {
 			continue
 		}
 		if dev := hwDevice(cfg.device_type); dev != nil {
 			t.useDevice(dev, cfg.pix_fmt)
-			return
+			return true
 		}
 	}
 }
