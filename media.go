@@ -256,12 +256,17 @@ type track struct {
 	last  *C.AVFrame // the frame take moved past last
 	hw    *C.AVFrame // for downloading frames when decoding on the GPU
 	gpu   bool       // decoding on the device Fyne's painter draws with, whose frames stay there
-	pool  *C.AVBufferPool
-	size  C.size_t      // of the pool's buffers
-	tb    float64       // seconds per timestamp unit
-	queue []*C.AVPacket // read while looking for the other track's
-	ready bool          // frame holds a frame not taken yet
-	t     float64       // and its time
+	// reopen has seek make a new decoder rather than flush this one, as on
+	// VideoToolbox, whose session keeps its reference frames through a flush:
+	// after a seek to a keyframe that is not an IDR, frames predict from the
+	// pictures left from before the seek until the next keyframe
+	reopen bool
+	pool   *C.AVBufferPool
+	size   C.size_t      // of the pool's buffers
+	tb     float64       // seconds per timestamp unit
+	queue  []*C.AVPacket // read while looking for the other track's
+	ready  bool          // frame holds a frame not taken yet
+	t      float64       // and its time
 }
 
 // openMedia opens path, which can be anything libavformat reads, with its
@@ -534,6 +539,7 @@ func HardwareDecoders() []string {
 func (t *track) useDevice(dev *C.AVBufferRef, format C.enum_AVPixelFormat) {
 	C.use_hw(t.cc, dev, format)
 	t.hw = C.av_frame_alloc()
+	t.reopen = format == C.AV_PIX_FMT_VIDEOTOOLBOX
 }
 
 var (
@@ -646,6 +652,12 @@ func (m *media) seek(t float64) {
 	if t > 0 || m.fc.iformat.flags&C.AVFMT_TS_DISCONT == 0 || C.av_seek_frame(m.fc, -1, 0, C.AVSEEK_FLAG_BYTE) < 0 {
 		ts := C.int64_t((t + m.start) * C.AV_TIME_BASE)
 		C.avformat_seek_file(m.fc, -1, math.MinInt64, ts, ts, 0)
+	}
+	if v := m.video; v != nil && v.reopen {
+		if fresh := m.open(v.index); fresh != nil {
+			v.free()
+			m.video = fresh
+		}
 	}
 	for _, tr := range []*track{m.video, m.audio} {
 		if tr != nil {
