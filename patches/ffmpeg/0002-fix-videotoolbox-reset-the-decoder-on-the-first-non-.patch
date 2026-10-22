@@ -1,0 +1,112 @@
+From eadb0949ed918bd9a54974a01e14da316937b740 Mon Sep 17 00:00:00 2001
+From: roffe <joakim@roffe.nu>
+Date: Thu, 22 Oct 2026 22:30:55 +0200
+Subject: [PATCH] fix(videotoolbox): reset the decoder on the first non-IDR
+ picture after a flush
+
+VideoToolbox keeps the session's reference frames through
+avcodec_flush_buffers(), and a keyframe that is not an IDR picture (an
+H.264 recovery point, an HEVC CRA) does not clear them, so after a seek
+the pictures up to the next IDR predicted from frames left from before
+it and showed broken blocks. VideoToolbox has no reset call, but a
+sample buffer can carry
+kCMSampleBufferAttachmentKey_ResetDecoderBeforeDecoding, which Apple
+advises for the first sample after a seek (https://crbug.com/451536366).
+
+Give the h264 and hevc hwaccels a flush callback that marks a reset
+pending, and set the attachment on the next sample unless its picture
+is an IDR, or a BLA for HEVC, which drops the references by itself.
+---
+ libavcodec/videotoolbox.c | 25 +++++++++++++++++++++++++
+ libavcodec/vt_internal.h  |  4 ++++
+ 2 files changed, 29 insertions(+)
+
+diff --git a/libavcodec/videotoolbox.c b/libavcodec/videotoolbox.c
+index 8df8a32..1912497 100644
+--- a/libavcodec/videotoolbox.c
++++ b/libavcodec/videotoolbox.c
+@@ -424,6 +424,9 @@ int ff_videotoolbox_h264_start_frame(AVCodecContext *avctx,
+     VTContext *vtctx = avctx->internal->hwaccel_priv_data;
+     H264Context *h = avctx->priv_data;
+ 
++    if (h->picture_idr)
++        vtctx->reset_pending = false;
++
+     if (h->is_avc == 1) {
+         return ff_videotoolbox_buffer_copy(vtctx, buffer, size);
+     }
+@@ -522,6 +525,16 @@ static void videotoolbox_stop(AVCodecContext *avctx)
+     }
+ }
+ 
++// The session keeps its reference frames through a flush, and a keyframe
++// that is not an IDR picture leaves them in place, so the first picture
++// decoded after the flush has the decoder reset instead.
++static void videotoolbox_flush(AVCodecContext *avctx)
++{
++    VTContext *vtctx = avctx->internal->hwaccel_priv_data;
++
++    vtctx->reset_pending = true;
++}
++
+ int ff_videotoolbox_uninit(AVCodecContext *avctx)
+ {
+     VTContext *vtctx = avctx->internal->hwaccel_priv_data;
+@@ -757,6 +770,12 @@ static OSStatus videotoolbox_session_decode_frame(AVCodecContext *avctx)
+     if (!sample_buf)
+         return -1;
+ 
++    if (vtctx->reset_pending) {
++        CMSetAttachment(sample_buf, kCMSampleBufferAttachmentKey_ResetDecoderBeforeDecoding,
++                        kCFBooleanTrue, kCMAttachmentMode_ShouldNotPropagate);
++        vtctx->reset_pending = false;
++    }
++
+     status = VTDecompressionSessionDecodeFrame(videotoolbox->session,
+                                                sample_buf,
+                                                0,       // decodeFlags
+@@ -1102,6 +1121,10 @@ static int videotoolbox_hevc_start_frame(AVCodecContext *avctx,
+ {
+     HEVCContext *h = avctx->priv_data;
+     AVFrame *frame = h->cur_frame->f;
++    VTContext *vtctx = avctx->internal->hwaccel_priv_data;
++
++    if (IS_IDR(h) || IS_BLA(h))
++        vtctx->reset_pending = false;
+ 
+     frame->crop_right  = 0;
+     frame->crop_left   = 0;
+@@ -1407,6 +1430,7 @@ const FFHWAccel ff_hevc_videotoolbox_hwaccel = {
+     .frame_params   = ff_videotoolbox_frame_params,
+     .init           = ff_videotoolbox_common_init,
+     .uninit         = ff_videotoolbox_uninit,
++    .flush          = videotoolbox_flush,
+     .priv_data_size = sizeof(VTContext),
+ };
+ 
+@@ -1423,6 +1447,7 @@ const FFHWAccel ff_h264_videotoolbox_hwaccel = {
+     .frame_params   = ff_videotoolbox_frame_params,
+     .init           = ff_videotoolbox_common_init,
+     .uninit         = ff_videotoolbox_uninit,
++    .flush          = videotoolbox_flush,
+     .priv_data_size = sizeof(VTContext),
+ };
+ 
+diff --git a/libavcodec/vt_internal.h b/libavcodec/vt_internal.h
+index b1eb073..dbaff44 100644
+--- a/libavcodec/vt_internal.h
++++ b/libavcodec/vt_internal.h
+@@ -46,6 +46,10 @@ typedef struct VTContext {
+     uint8_t                     sps[3];
+     bool                        reconfig_needed;
+ 
++    // Set by a flush: the next sample resets the decoder, unless its picture
++    // is an IDR.
++    bool                        reset_pending;
++
+     void *logctx;
+ } VTContext;
+ 
+-- 
+2.56.0
+

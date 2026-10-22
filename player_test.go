@@ -260,18 +260,13 @@ func TestAudioTracks(t *testing.T) {
 	}
 }
 
-func TestSeekReopens(t *testing.T) {
+func TestSeek(t *testing.T) {
 	m, err := openMedia("testdata/test.mp4", false, "none", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer m.close()
-	m.video.reopen = true
-	before := m.video
 	m.seek(1)
-	if m.video == before {
-		t.Fatal("seek kept the decoder")
-	}
 	ft, ok := m.next()
 	if !ok || ft > 1.001 {
 		t.Fatalf("first frame after the seek at %.3fs, ok %v, want the keyframe at or before 1s", ft, ok)
@@ -281,31 +276,26 @@ func TestSeekReopens(t *testing.T) {
 		ft, ok = m.next()
 	}
 	if !ok {
-		t.Error("the new decoder stopped before 1.5s")
+		t.Error("the decoder stopped before 1.5s")
 	}
 }
 
 // BenchmarkSeek times a seek and the first frame after it, on the decoder
-// the machine picks, flushing it and making a new one. FMW_BENCH_FILE names
-// a file to seek in other than the test video.
+// the machine picks. FMW_BENCH_FILE names a file to seek in other than the
+// test video.
 func BenchmarkSeek(b *testing.B) {
 	path := cmp.Or(os.Getenv("FMW_BENCH_FILE"), "testdata/test.mp4")
-	for _, reopen := range []bool{false, true} {
-		b.Run(map[bool]string{false: "flush", true: "reopen"}[reopen], func(b *testing.B) {
-			m, err := openMedia(path, false, "", nil)
-			if err != nil {
-				b.Fatal(err)
-			}
-			defer m.close()
-			at := [2]float64{0.5, m.dur / 2}
-			for i := 0; b.Loop(); i++ {
-				m.video.reopen = reopen
-				m.seek(at[i%2])
-				if _, ok := m.next(); !ok {
-					b.Fatal("no frame after the seek")
-				}
-			}
-		})
+	m, err := openMedia(path, false, "", nil)
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer m.close()
+	at := [2]float64{0.5, m.dur / 2}
+	for i := 0; b.Loop(); i++ {
+		m.seek(at[i%2])
+		if _, ok := m.next(); !ok {
+			b.Fatal("no frame after the seek")
+		}
 	}
 }
 
