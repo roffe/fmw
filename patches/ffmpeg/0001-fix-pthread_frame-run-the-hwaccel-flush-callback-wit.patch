@@ -1,0 +1,43 @@
+From a29b41f3a4ee0a84c41b4d2dd6e4b301d16b09c4 Mon Sep 17 00:00:00 2001
+From: roffe <joakim@roffe.nu>
+Date: Thu, 22 Oct 2026 21:59:09 +0200
+Subject: [PATCH] fix(pthread_frame): run the hwaccel flush callback with frame
+ threads
+
+Between frames, a hwaccel without HWACCEL_CAP_THREAD_SAFE keeps its state
+in the stash, and every worker context has its hwaccel pointers cleared.
+ff_thread_flush() flushes the worker contexts, where the decoders look for
+the hwaccel's flush callback, so with frame threading the callback never
+ran. Call it on the stashed state.
+---
+ libavcodec/pthread_frame.c | 14 ++++++++++++++
+ 1 file changed, 14 insertions(+)
+
+diff --git a/libavcodec/pthread_frame.c b/libavcodec/pthread_frame.c
+index e6dcc23..4505808 100644
+--- a/libavcodec/pthread_frame.c
++++ b/libavcodec/pthread_frame.c
+@@ -995,6 +995,20 @@ av_cold void ff_thread_flush(AVCodecContext *avctx)
+ 
+         avcodec_flush_buffers(p->avctx);
+     }
++
++    /* A thread-unsafe hwaccel keeps its state in the stash between frames,
++     * so the flushes above found no hwaccel to call. */
++    if (fctx->stash_hwaccel && ffhwaccel(fctx->stash_hwaccel)->flush) {
++        AVCodecContext *ctx = fctx->threads[0].avctx;
++
++        FFSWAP(const AVHWAccel*, ctx->hwaccel,                     fctx->stash_hwaccel);
++        FFSWAP(void*,            ctx->hwaccel_context,             fctx->stash_hwaccel_context);
++        FFSWAP(void*,            ctx->internal->hwaccel_priv_data, fctx->stash_hwaccel_priv);
++        FF_HW_SIMPLE_CALL(ctx, flush);
++        FFSWAP(const AVHWAccel*, ctx->hwaccel,                     fctx->stash_hwaccel);
++        FFSWAP(void*,            ctx->hwaccel_context,             fctx->stash_hwaccel_context);
++        FFSWAP(void*,            ctx->internal->hwaccel_priv_data, fctx->stash_hwaccel_priv);
++    }
+ }
+ 
+ int ff_thread_can_start_frame(AVCodecContext *avctx)
+-- 
+2.56.0
+

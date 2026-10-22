@@ -122,7 +122,7 @@ To work on Fyne or gowgpu at the same time, clone them next to fmw and `go work 
 
 `make linux-static` builds a single binary into `dist/fmw-static` with FFmpeg and projectM linked in, only the presets, textures and licenses go next to it. FFmpeg gets built from source there with just what fmw needs: dav1d, OpenSSL for https, and VAAPI, NVDEC and Vulkan for hardware decoding, all static. It takes glibc, OpenGL, EGL and Wayland/X11 from the system like any desktop app. Needs meson, ninja and nasm on top of the rest.
 
-`make deps` gets what building here takes into `.tmp`. On a Mac that's FFmpeg 9.0 built from source, static, and `make macos` then builds `dist/macos/fmw` against it, decoding on VideoToolbox. Needs the Xcode command line tools, pkg-config (`brew install pkgconf`) and the fyne tool. No visualizations on macOS yet.
+`make deps` gets what building here takes into `.tmp`. On a Mac that's FFmpeg 9.0 built from source, static, with the fixes in `patches/ffmpeg` applied until FFmpeg has them, and `make macos` then builds `dist/macos/fmw` against it, decoding on VideoToolbox. Needs the Xcode command line tools, pkg-config (`brew install pkgconf`) and the fyne tool. No visualizations on macOS yet.
 
 ## Hardware decoding
 

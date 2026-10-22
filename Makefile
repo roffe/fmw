@@ -18,6 +18,7 @@ PRESETS=https://github.com/projectM-visualizer/presets-cream-of-the-crop/archive
 TEXTURES=https://github.com/projectM-visualizer/presets-milkdrop-texture-pack/archive/6368812f27bc747b517218fbf89d21d59afce4d9.tar.gz
 PROJECTM_CMAKE=-DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_LIBDIR=lib -DENABLE_SYSTEM_PROJECTM_EVAL=OFF -DBUILD_TESTING=OFF -DCMAKE_POLICY_VERSION_MINIMUM=3.5
 FFMPEG_SRC=https://ffmpeg.org/releases/ffmpeg-9.0.tar.xz
+FFMPEG_PATCHES=$(sort $(wildcard patches/ffmpeg/*.patch))
 NDK?=$(HOME)/Android/android-ndk-r30
 NDKBIN=$(NDK)/toolchains/llvm/prebuilt/linux-x86_64/bin
 ANDROID_API=21
@@ -71,16 +72,18 @@ endif
 # BtbN has no macOS builds either. Static, so fmw needs no FFmpeg installed.
 # configure finds VideoToolbox for hardware decoding and Secure Transport for
 # https by itself.
-.tmp/macos:
+.tmp/macos: $(FFMPEG_PATCHES)
 	rm -rf $@.part .tmp/ffmpeg-macos
 	mkdir -p .tmp/ffmpeg-macos
 	curl -fsSL $(FFMPEG_SRC) | tar -xJ --strip-components=1 -C .tmp/ffmpeg-macos
+	for p in $(FFMPEG_PATCHES); do patch -p1 -d .tmp/ffmpeg-macos < $$p || exit 1; done
 	cd .tmp/ffmpeg-macos && ./configure --prefix=$(CURDIR)/$@.part --enable-static --disable-shared --enable-pic \
 		--disable-programs --disable-doc --disable-avdevice --disable-avfilter --disable-encoders --disable-muxers
 	$(MAKE) -C .tmp/ffmpeg-macos -j$(NPROC) install
 	sed -i.bak 's|$(CURDIR)/$@.part|$${pcfiledir}/../..|g' $@.part/lib/pkgconfig/*.pc
 	rm $@.part/lib/pkgconfig/*.bak
 	cp .tmp/ffmpeg-macos/COPYING.LGPLv2.1 $@.part/LICENSE.txt
+	rm -rf $@
 	mv $@.part $@
 
 # FFmpeg for make linux-static, with only what fmw needs to play files and
