@@ -428,3 +428,18 @@ func TestPlayEmpty(t *testing.T) {
 	case <-time.After(200 * time.Millisecond):
 	}
 }
+
+func TestShowOnce(t *testing.T) {
+	test.NewTempApp(t)
+	p := NewPlayer()
+	p.queued.Store(true)
+	p.show() // the test driver runs fyne.Do where it is called
+	if !p.queued.Load() {
+		t.Fatal("show published while a publish was already on its way")
+	}
+	p.queued.Store(false)
+	p.show()
+	if p.queued.Load() {
+		t.Fatal("show left queued set after publishing")
+	}
+}

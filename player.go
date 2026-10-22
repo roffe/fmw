@@ -81,6 +81,7 @@ type Player struct {
 	back    *picture // next on screen, when fresh
 	spare   *picture // the work goroutine takes frames into it
 	fresh   bool
+	queued  atomic.Bool // a publish is on its way to the main goroutine
 	vol     float64
 	turn    int    // degrees the picture turns clockwise past how the video says to show it
 	hwdec   string // see SetHardwareDecoding
@@ -707,11 +708,24 @@ func (p *Player) work() {
 		} else {
 			// shown now, as it is due, not after the wait for the next one,
 			// which would take its place before the screen had it
-			fyne.Do(p.publish)
+			p.show()
 			time.Sleep(wait)
 			continue
 		}
-		fyne.Do(p.publish)
+		p.show()
+	}
+}
+
+// show runs publish on the main goroutine once, however many times it is
+// asked before publish gets there, so a main loop that stalls, as while a
+// window edge is dragged, is left one publish to catch up with, not one a
+// frame.
+func (p *Player) show() {
+	if p.queued.CompareAndSwap(false, true) {
+		fyne.Do(func() {
+			p.queued.Store(false)
+			p.publish()
+		})
 	}
 }
 
