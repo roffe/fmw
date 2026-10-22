@@ -340,3 +340,50 @@ func TestLoadReplaced(t *testing.T) {
 		t.Errorf("what plays is %v long, not test.mp4", d)
 	}
 }
+
+func TestSetSkip(t *testing.T) {
+	test.NewTempApp(t)
+	p := NewPlayer()
+	if !p.prev.Disabled() || !p.next.Disabled() {
+		t.Fatal("skip buttons enabled without a playlist")
+	}
+	skipped := 0
+	p.SetSkip(nil, func() { skipped++ })
+	if !p.prev.Disabled() || p.next.Disabled() {
+		t.Errorf("prev disabled %v, next disabled %v, want only prev", p.prev.Disabled(), p.next.Disabled())
+	}
+	test.Tap(p.next)
+	test.Tap(p.prev) // disabled, and with nothing to call
+	if skipped != 1 {
+		t.Errorf("next skipped %d times, want 1", skipped)
+	}
+	p.SetSkip(nil, nil)
+	if !p.prev.Disabled() || !p.next.Disabled() {
+		t.Error("skip buttons enabled with nothing to skip to")
+	}
+}
+
+func TestPlayEmpty(t *testing.T) {
+	test.NewTempApp(t)
+	p := NewPlayer()
+	p.SetVolume(0)
+	empty := make(chan struct{}, 2)
+	p.OnEmpty = func() { empty <- struct{}{} }
+	p.Play()
+	select {
+	case <-empty:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Play with nothing loaded did not call OnEmpty")
+	}
+	if err := p.Load("testdata/test.mp4"); err != nil {
+		t.Fatal(err)
+	}
+	p.Play()
+	p.Stop()
+	p.Play() // stopped, not empty
+	select {
+	case <-empty:
+		t.Error("OnEmpty called with a file loaded")
+	case <-time.After(200 * time.Millisecond):
+	}
+}

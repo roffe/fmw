@@ -61,6 +61,8 @@ func main() {
 	}
 	pl := newPlaylist(a, w, load)
 	p.OnEnded = pl.ended
+	p.OnEmpty = pl.next // a fresh start plays the first entry
+	pl.skip = p.SetSkip
 
 	recent := fyne.NewMenuItem("Open Recent", nil)
 	recent.ChildMenu = fyne.NewMenu("")

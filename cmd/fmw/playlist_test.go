@@ -44,3 +44,19 @@ func TestPlaylistPlaysThrough(t *testing.T) {
 		t.Errorf("%s started next, entry %d, want the third past the missing one", got, pl.current)
 	}
 }
+
+func TestPlaylistSkips(t *testing.T) {
+	var prev, next bool
+	pl := &playlist{current: -1, selected: -1, skip: func(p, n func()) { prev, next = p != nil, n != nil }}
+	pl.add([]string{"a.mp4", "b.mp4", "c.mp4"})
+	for _, c := range []struct {
+		current    int
+		prev, next bool
+	}{{-1, false, false}, {0, false, true}, {1, true, true}, {2, true, false}} {
+		pl.current = c.current
+		pl.refresh()
+		if prev != c.prev || next != c.next {
+			t.Errorf("entry %d: prev %v next %v, want %v %v", c.current, prev, next, c.prev, c.next)
+		}
+	}
+}

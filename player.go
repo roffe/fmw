@@ -40,9 +40,14 @@ type Player struct {
 	// OnEnded is called on the main goroutine when playback reaches the end
 	// of what is loaded, as a playlist moves on to the next file.
 	OnEnded func()
+	// OnEmpty is called on the main goroutine when Play is asked with nothing
+	// loaded, as a playlist starts its next file.
+	OnEmpty func()
 
 	screen           *canvas.VideoFrame
 	play, stop, full *widget.Button
+	prev, next       *widget.Button // skip buttons, see SetSkip
+	onPrev, onNext   func()
 	seek, volume     *widget.Slider
 	times            *widget.Label
 	subs             *fyne.Container // over the screen, see subtitleLayout
@@ -111,6 +116,10 @@ func NewPlayer() *Player {
 	}, [3]*picture{p.front, p.back, p.spare})
 	p.play = widget.NewButtonWithIcon("", theme.MediaPlayIcon(), p.TogglePlay)
 	p.stop = widget.NewButtonWithIcon("", theme.MediaStopIcon(), p.Stop)
+	p.prev = widget.NewButtonWithIcon("", theme.MediaSkipPreviousIcon(), func() { p.skip(p.onPrev) })
+	p.next = widget.NewButtonWithIcon("", theme.MediaSkipNextIcon(), func() { p.skip(p.onNext) })
+	p.prev.Disable()
+	p.next.Disable()
 	p.seek = widget.NewSlider(0, 1)
 	p.seek.Step = 0
 	p.seek.OnChanged = func(v float64) {
@@ -144,7 +153,7 @@ func NewPlayer() *Player {
 func (p *Player) CreateRenderer() fyne.WidgetRenderer {
 	vol := container.NewGridWrap(fyne.Size{}, p.volume)
 	p.bar = container.NewBorder(nil, nil,
-		container.NewHBox(p.play, p.stop, container.NewCenter(p.times)),
+		container.NewHBox(p.prev, p.play, p.stop, p.next, container.NewCenter(p.times)),
 		container.NewHBox(widget.NewIcon(theme.VolumeUpIcon()), vol, p.full),
 		p.seek)
 	if fyne.CurrentDevice().IsMobile() {
@@ -345,7 +354,14 @@ func (p *Player) load(path string, gen uint64) error {
 func (p *Player) Play() {
 	p.mu.Lock()
 	s := p.s
-	if s == nil || p.playing {
+	if s == nil {
+		p.mu.Unlock()
+		if p.OnEmpty != nil {
+			fyne.Do(p.OnEmpty) // runs right here on some drivers, so never under mu
+		}
+		return
+	}
+	if p.playing {
 		p.mu.Unlock()
 		return
 	}
@@ -460,6 +476,29 @@ func (p *Player) showSubtitles(i int) {
 	}
 	p.mu.Unlock()
 	fyne.Do(p.publish)
+}
+
+// SetSkip gives the button that skips back prev to call and the one that
+// skips forward next, as a playlist has entries before and after the one
+// playing; a button with nil is disabled. Call it on the main goroutine.
+func (p *Player) SetSkip(prev, next func()) {
+	p.onPrev, p.onNext = prev, next
+	for _, b := range []struct {
+		button *widget.Button
+		on     func()
+	}{{p.prev, prev}, {p.next, next}} {
+		if b.on != nil {
+			b.button.Enable()
+		} else {
+			b.button.Disable()
+		}
+	}
+}
+
+func (p *Player) skip(to func()) {
+	if to != nil {
+		to()
+	}
 }
 
 // ToggleFullScreen puts the window showing the player in full screen, or

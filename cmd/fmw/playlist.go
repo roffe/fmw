@@ -27,6 +27,7 @@ var playlists = []browse.Filter{
 type playlist struct {
 	app      fyne.App
 	load     func(entry, func(error)) // loads an entry into the player, plays it and says how that went
+	skip     func(prev, next func())  // enables the player's skip buttons, nil for none, see Player.SetSkip
 	entries  []entry
 	current  int         // the entry playing, -1 for none
 	selected int         // in the window, -1 for none
@@ -72,6 +73,16 @@ func (pl *playlist) parent() fyne.Window {
 func (pl *playlist) refresh() {
 	if pl.list != nil {
 		pl.list.Refresh()
+	}
+	if pl.skip != nil {
+		var prev, next func()
+		if pl.current > 0 {
+			prev = pl.previous
+		}
+		if pl.current >= 0 && pl.current < len(pl.entries)-1 {
+			next = pl.next
+		}
+		pl.skip(prev, next)
 	}
 }
 
