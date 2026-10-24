@@ -1,4 +1,4 @@
-.PHONY: deps linux linux-static appimage windows macos android install-android clean
+.PHONY: deps linux linux-static appimage install-linux windows macos android install-android clean
 
 VERSION=$(shell sed -n 's/^Version = "\(.*\)"/\1/p' cmd/fmw/FyneApp.toml)
 FFMPEG=https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n9.0-latest
@@ -24,7 +24,9 @@ NDKBIN=$(NDK)/toolchains/llvm/prebuilt/linux-x86_64/bin
 ANDROID_API=21
 ADB?=$(HOME)/Android/platform-tools/adb
 NPROC=$(shell nproc 2>/dev/null || sysctl -n hw.ncpu)
-MIMETYPES=video/mp4;video/x-matroska;video/mpeg;video/ogg;video/quicktime;video/vnd.avi;video/mp2t;video/webm;video/x-ms-wmv;audio/aac;audio/ac3;audio/flac;audio/mp4;audio/mpeg;audio/ogg;audio/vnd.wave;audio/webm;audio/x-matroska;audio/x-mpegurl;
+PREFIX?=$(HOME)/.local
+MIMETYPES=application/ogg;application/x-ogg;application/mxf;application/vnd.rn-realmedia;application/vnd.rn-realmedia-vbr;audio/aac;audio/x-aac;audio/vnd.dolby.heaac.1;audio/vnd.dolby.heaac.2;audio/aiff;audio/x-aiff;audio/m4a;audio/x-m4a;application/x-extension-m4a;audio/mp1;audio/x-mp1;audio/mp2;audio/x-mp2;audio/mp3;audio/x-mp3;audio/mpeg;audio/mpeg2;audio/mpeg3;audio/mpegurl;audio/x-mpegurl;audio/mpg;audio/x-mpg;audio/rn-mpeg;audio/musepack;audio/x-musepack;audio/ogg;audio/vnd.rn-realaudio;audio/wav;audio/x-pn-wav;audio/x-pn-windows-pcm;audio/x-realaudio;audio/x-pn-realaudio;audio/x-ms-wma;audio/x-wav;video/mpeg;video/x-mpeg2;video/x-mpeg3;video/mp4v-es;video/x-m4v;video/mp4;application/x-extension-mp4;video/divx;video/vnd.divx;video/msvideo;video/x-msvideo;video/ogg;video/quicktime;video/vnd.rn-realvideo;video/x-ms-afs;video/x-ms-asf;audio/x-ms-asf;application/vnd.ms-asf;video/x-ms-wmv;video/x-ms-wmx;video/x-ms-wvxvideo;video/x-avi;video/avi;video/x-flic;video/fli;video/x-flc;video/flv;video/x-flv;video/x-theora;video/x-theora+ogg;video/x-matroska;video/mkv;audio/x-matroska;application/x-matroska;video/webm;audio/webm;audio/vorbis;audio/x-vorbis;audio/x-vorbis+ogg;video/x-ogm;video/x-ogm+ogg;application/x-ogm;application/x-ogm-audio;application/x-ogm-video;application/x-shorten;audio/x-shorten;audio/x-ape;audio/x-wavpack;audio/x-tta;audio/AMR;audio/ac3;audio/eac3;audio/amr-wb;video/mp2t;audio/flac;audio/mp4;application/x-mpegurl;video/vnd.mpegurl;application/vnd.apple.mpegurl;audio/x-pn-au;video/3gp;video/3gpp;video/3gpp2;audio/3gpp;audio/3gpp2;video/dv;audio/dv;audio/opus;audio/vnd.dts;audio/vnd.dts.hd;audio/x-adpcm;audio/m3u;audio/vnd.wave;video/vnd.avi;
+DESKTOP=[Desktop Entry]\nType=Application\nName=fmw\nIcon=com.roffe.fmw\nCategories=AudioVideo;Video;Player;\nMimeType=$(MIMETYPES)\n
 
 # The releases build against FFmpeg from BtbN and projectM built here, and
 # bundle them, not the system's
@@ -239,8 +241,20 @@ appimage: linux .tmp/appimagetool
 	ln -s fmw .tmp/AppDir/AppRun
 	cp logo.png .tmp/AppDir/com.roffe.fmw.png
 	ln -s com.roffe.fmw.png .tmp/AppDir/.DirIcon
-	printf '[Desktop Entry]\nType=Application\nName=fmw\nExec=fmw %%F\nIcon=com.roffe.fmw\nCategories=AudioVideo;Video;Player;\nMimeType=$(MIMETYPES)\n' > .tmp/AppDir/com.roffe.fmw.desktop
+	printf '$(DESKTOP)Exec=fmw %%F\n' > .tmp/AppDir/com.roffe.fmw.desktop
 	ARCH=x86_64 VERSION=$(VERSION) .tmp/appimagetool --appimage-extract-and-run --no-appstream .tmp/AppDir dist/fmw-x86_64.AppImage
+
+# The linux build in $(PREFIX)/lib/fmw, linked from $(PREFIX)/bin, with a
+# desktop entry so it shows up in the menu and as a player for the MIMETYPES
+install-linux: linux
+	rm -rf $(PREFIX)/lib/fmw
+	mkdir -p $(PREFIX)/lib $(PREFIX)/bin $(PREFIX)/share/applications
+	cp -a dist/fmw $(PREFIX)/lib/fmw
+	ln -sf ../lib/fmw/fmw $(PREFIX)/bin/fmw
+	install -Dm644 logo.png $(PREFIX)/share/icons/hicolor/512x512/apps/com.roffe.fmw.png
+	printf '$(DESKTOP)Exec=$(PREFIX)/bin/fmw %%F\n' > $(PREFIX)/share/applications/com.roffe.fmw.desktop
+	-update-desktop-database $(PREFIX)/share/applications
+	-kbuildsycoca6
 
 windows: .tmp/win64 .tmp/Vulkan-Headers .tmp/projectm-win64 .tmp/presets .tmp/textures
 	rm -rf dist/windows dist/fmw_windows_x64.zip
