@@ -60,10 +60,10 @@ github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZb
 github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
 github.com/roffe/browse v0.0.0-20261004104941-eb6d091b1974 h1:0sTHqcaQMYaRote/EYtlRXixwaCrR7nUkFQqEAioX5A=
 github.com/roffe/browse v0.0.0-20261004104941-eb6d091b1974/go.mod h1:qJAMUtwoSym/Ybjw8xt/iwCm19aAGiJtmSILHm6QHmY=
-github.com/roffe/fyne/v2 v2.0.0-20261024000252-ec283f75b513 h1:9q+oo+s3uJnuvcUjJkfLa0Wmd9/wROH7A4KpJFk77Dk=
-github.com/roffe/fyne/v2 v2.0.0-20261024000252-ec283f75b513/go.mod h1:f/ukIVDhjUL33CI+QxspdaMKX9izryW44Cqug/fgBg8=
-github.com/roffe/gowgpu v0.0.0-20261024023332-928caa0c1fea h1:2qiEQOdpDyaTDWsBuFLZWMumENRvMaWKtHuoaOYCKZY=
-github.com/roffe/gowgpu v0.0.0-20261024023332-928caa0c1fea/go.mod h1:6cFW5Vy47lpzvufTWzQAb6WC5PevEF2f6UF6j7g5gZA=
+github.com/roffe/fyne/v2 v2.0.0-20261024095843-7b0ad57c2ddb h1:xbHc4rvXHx3KgSi+bfFu+ymi/TeTGlLP6kpvPqAy3mo=
+github.com/roffe/fyne/v2 v2.0.0-20261024095843-7b0ad57c2ddb/go.mod h1:gls130f1l/q1Pg6U8WX6MjZPOOC2gZxGnZzJ04x3dUo=
+github.com/roffe/gowgpu v0.0.0-20261024095757-0343737dd5f7 h1:xu2Ygsb+ZCoagF4FvvvyIFy5N63S2J9gWVKvLSOgx78=
+github.com/roffe/gowgpu v0.0.0-20261024095757-0343737dd5f7/go.mod h1:6cFW5Vy47lpzvufTWzQAb6WC5PevEF2f6UF6j7g5gZA=
 github.com/roffe/mdi3 v0.0.0-20261017000628-abdda3baa3d7 h1:8sHDfCUKhxQqK9v+t5+NWklcWz6DPp5lE4gwC48lSLI=
 github.com/roffe/mdi3 v0.0.0-20261017000628-abdda3baa3d7/go.mod h1:7mdyG3ioEiuTZzNJP7md2RgbMEbeQDWZyrqdZTig4lU=
 github.com/roffe/naga v0.0.0-20261024012201-f1fde643aedc h1:dC9z/EugwgCsFaJUXtnlD72N5aHajy9NfCJtmv2rnkY=
