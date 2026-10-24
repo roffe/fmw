@@ -19,7 +19,7 @@ var resolutions = [][2]int{{640, 360}, {854, 480}, {960, 540}, {1280, 720}, {160
 // settings window changes them.
 type settings struct {
 	prefs fyne.Preferences
-	p     *fmw.Player
+	video *fmw.Video
 	main  fyne.Window // for dialogs while the settings window is closed
 	win   fyne.Window
 }
@@ -45,8 +45,8 @@ func (s *settings) visualization() fmw.Visualization {
 
 // apply hands the player the settings.
 func (s *settings) apply() {
-	s.p.SetHardwareDecoding(s.prefs.String("hwdec"))
-	s.p.SetVisualization(s.visualization())
+	s.video.SetHardwareDecoding(s.prefs.String("hwdec"))
+	s.video.SetVisualization(s.visualization())
 }
 
 // show shows the settings window, which changes the settings as they are

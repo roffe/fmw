@@ -20,7 +20,7 @@ import (
 //		-metadata:s:s:1 title=Styled -disposition:a:0 default -disposition:s:0 default test.mkv
 func TestSubtitles(t *testing.T) {
 	test.NewTempApp(t)
-	p := NewPlayer()
+	p := NewVideo()
 	p.SetVolume(0)
 	if err := p.Load("testdata/test.mkv"); err != nil {
 		t.Fatal(err)
@@ -40,7 +40,7 @@ func TestSubtitles(t *testing.T) {
 	}
 
 	for track := range 2 { // SubRip, then ASS, which both decode to ASS
-		p.showSubtitles(track)
+		p.ShowSubtitles(track)
 		p.Seek(0)
 		p.Play()
 		for end := time.Now().Add(3 * time.Second); p.CurrentTime() < time.Second; time.Sleep(5 * time.Millisecond) {

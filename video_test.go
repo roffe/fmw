@@ -12,9 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
-	"fyne.io/fyne/v2/driver/desktop"
 	"fyne.io/fyne/v2/test"
 )
 
@@ -26,11 +24,11 @@ import (
 //		-c:v mpeg1video -q:v 8 -c:a mp2 -b:a 64k -format mpeg testdata/test.mpg
 //	ffmpeg -f lavfi -i testsrc=duration=3:size=320x240:rate=25 -f lavfi -i sine=frequency=440:duration=3:sample_rate=48000 \
 //		-c:v libx264 -preset veryfast -g 75 -pix_fmt yuv420p -c:a aac -b:a 64k -movflags +faststart testdata/test.mp4
-func TestPlayer(t *testing.T) {
+func TestVideo(t *testing.T) {
 	test.NewTempApp(t)
 	for _, name := range []string{"testdata/test.mpg", "testdata/test.mp4"} {
 		t.Run(name, func(t *testing.T) {
-			p := NewPlayer()
+			p := NewVideo()
 			p.SetVolume(0)
 			near := func(want, slack time.Duration) {
 				t.Helper()
@@ -108,82 +106,6 @@ func TestPlayer(t *testing.T) {
 	}
 }
 
-// TestMenu checks what the secondary button's menu offers and that its
-// subtitle and full screen items act.
-func TestMenu(t *testing.T) {
-	test.NewTempApp(t)
-	p := NewPlayer()
-	p.SetVolume(0)
-	w := test.NewWindow(p)
-	defer w.Close()
-	if err := p.Load("testdata/test.mkv"); err != nil {
-		t.Fatal(err)
-	}
-	labels := func(items []*fyne.MenuItem) (l []string) {
-		for _, item := range items {
-			if item.Checked {
-				l = append(l, "*"+item.Label)
-			} else {
-				l = append(l, item.Label)
-			}
-		}
-		return l
-	}
-
-	m := p.menu()
-	if got, want := labels(m.Items), []string{"Play", "Stop", "", "Full Screen", "Rotate", "Audio", "Subtitles"}; !slices.Equal(got, want) {
-		t.Fatalf("menu %q, want %q", got, want)
-	}
-	if got, want := labels(m.Items[5].ChildMenu.Items), []string{"*eng (aac mono)", "swe (ac3 mono)"}; p.s.out != nil && !slices.Equal(got, want) {
-		t.Errorf("audio %q, want %q", got, want)
-	}
-	subs := m.Items[6].ChildMenu.Items
-	if got, want := labels(subs), []string{"Off", "*eng", "swe - Styled"}; !slices.Equal(got, want) {
-		t.Fatalf("subtitles %q, want %q", got, want)
-	}
-
-	subs[2].Action()
-	m.Items[3].Action()
-	m = p.menu()
-	if got, want := labels(m.Items[6].ChildMenu.Items), []string{"Off", "eng", "*swe - Styled"}; !slices.Equal(got, want) {
-		t.Errorf("after choosing swe, subtitles %q", got)
-	}
-	if !w.FullScreen() || !m.Items[3].Checked {
-		t.Error("Full Screen did not put the window in full screen")
-	}
-
-	// the test driver runs fyne.Do where it is called, so the UI is only
-	// touched here while the player's goroutine is not publishing
-	idle := func() {
-		for p.mu.Lock(); p.busy; p.mu.Lock() {
-			p.mu.Unlock()
-			time.Sleep(time.Millisecond)
-		}
-		p.mu.Unlock()
-	}
-	idle()
-	test.TapAt(p.seek, fyne.NewPos(p.seek.Size().Width/2, p.seek.Size().Height/2))
-	idle()
-	if f := w.Canvas().Focused(); f != nil {
-		t.Errorf("seeking left %T focused, so Space would not reach the window", f)
-	}
-
-	p.SetVolume(0.5)
-	test.Scroll(w.Canvas(), fyne.NewPos(10, 10), 0, 25) // a notch up, over the picture
-	if v := p.Volume(); v < 0.519 || v > 0.521 {
-		t.Errorf("scrolling a notch up set the volume to %v", v)
-	}
-
-	idle()
-	p.menu().Items[4].ChildMenu.Items[1].Action()
-	p.mu.Lock()
-	turned := p.screen.Rotation
-	p.mu.Unlock()
-	if got := labels(p.menu().Items[4].ChildMenu.Items); turned != 90 || got[1] != "*90° Clockwise" {
-		t.Errorf("rotating clockwise shows the picture at %d°, the menu as %q", turned, got)
-	}
-}
-
 // testdata/hdr10.mkv is a second of HEVC test pattern in 10-bit PQ with HDR10
 // metadata: a 4000 cd/m² mastering display and a brightest pixel of 1000.
 //
@@ -192,7 +114,7 @@ func TestMenu(t *testing.T) {
 //		testdata/hdr10.mkv
 func TestHDR(t *testing.T) {
 	test.NewTempApp(t)
-	p := NewPlayer()
+	p := NewVideo()
 	p.SetVolume(0)
 	if err := p.Load("testdata/hdr10.mkv"); err != nil {
 		t.Fatal(err)
@@ -299,53 +221,11 @@ func BenchmarkSeek(b *testing.B) {
 	}
 }
 
-// TestControlsRest checks that in full screen the controls, the window's menu
-// and the pointer hide while it rests on the picture, and come back as it moves.
-func TestControlsRest(t *testing.T) {
-	test.NewTempApp(t)
-	p := NewPlayer()
-	w := test.NewWindow(p)
-	defer w.Close()
-	menu := fyne.NewMainMenu(fyne.NewMenu("File"))
-	w.SetMainMenu(menu)
-	rest := func() { // as the timer would, without waiting for it
-		p.idle.Stop()
-		p.moved = p.moved.Add(-restDelay)
-		p.rest()
-	}
-
-	test.DoubleTap(p)
-	if !w.FullScreen() {
-		t.Fatal("a double tap did not go full screen")
-	}
-	p.MouseMoved(&desktop.MouseEvent{})
-	rest()
-	if p.bar.Visible() || w.MainMenu() != nil || p.Cursor() != desktop.HiddenCursor {
-		t.Error("resting on the picture left the controls, the menu or the pointer showing")
-	}
-	p.MouseMoved(&desktop.MouseEvent{})
-	if !p.bar.Visible() || w.MainMenu() != menu || p.Cursor() != desktop.DefaultCursor {
-		t.Error("moving did not bring the controls, the menu and the pointer back")
-	}
-	p.MouseOut() // onto the controls
-	rest()
-	if !p.bar.Visible() {
-		t.Error("the controls hid under the pointer")
-	}
-
-	p.MouseIn(&desktop.MouseEvent{})
-	rest()
-	test.DoubleTap(p)
-	if w.FullScreen() || !p.bar.Visible() || w.MainMenu() != menu {
-		t.Error("leaving full screen did not show the controls and the menu")
-	}
-}
-
 // TestLoadReplaced checks that a later Load interrupts one waiting for a
 // stream's server, and wins.
 func TestLoadReplaced(t *testing.T) {
 	test.NewTempApp(t)
-	p := NewPlayer()
+	p := NewVideo()
 	w := test.NewWindow(p)
 	defer w.Close()
 	server, err := net.Listen("tcp", "127.0.0.1:0")
@@ -382,31 +262,9 @@ func TestLoadReplaced(t *testing.T) {
 	}
 }
 
-func TestSetSkip(t *testing.T) {
-	test.NewTempApp(t)
-	p := NewPlayer()
-	if !p.prev.Disabled() || !p.next.Disabled() {
-		t.Fatal("skip buttons enabled without a playlist")
-	}
-	skipped := 0
-	p.SetSkip(nil, func() { skipped++ })
-	if !p.prev.Disabled() || p.next.Disabled() {
-		t.Errorf("prev disabled %v, next disabled %v, want only prev", p.prev.Disabled(), p.next.Disabled())
-	}
-	test.Tap(p.next)
-	test.Tap(p.prev) // disabled, and with nothing to call
-	if skipped != 1 {
-		t.Errorf("next skipped %d times, want 1", skipped)
-	}
-	p.SetSkip(nil, nil)
-	if !p.prev.Disabled() || !p.next.Disabled() {
-		t.Error("skip buttons enabled with nothing to skip to")
-	}
-}
-
 func TestPlayEmpty(t *testing.T) {
 	test.NewTempApp(t)
-	p := NewPlayer()
+	p := NewVideo()
 	p.SetVolume(0)
 	empty := make(chan struct{}, 2)
 	p.OnEmpty = func() { empty <- struct{}{} }
@@ -431,7 +289,7 @@ func TestPlayEmpty(t *testing.T) {
 
 func TestShowOnce(t *testing.T) {
 	test.NewTempApp(t)
-	p := NewPlayer()
+	p := NewVideo()
 	p.queued.Store(true)
 	p.show() // the test driver runs fyne.Do where it is called
 	if !p.queued.Load() {
@@ -441,5 +299,41 @@ func TestShowOnce(t *testing.T) {
 	p.show()
 	if p.queued.Load() {
 		t.Fatal("show left queued set after publishing")
+	}
+}
+
+// TestTracks checks the tracks, subtitles and rotation an app's controls
+// offer, and that changing them calls OnChanged.
+func TestTracks(t *testing.T) {
+	test.NewTempApp(t)
+	v := NewVideo()
+	v.SetVolume(0)
+	if err := v.Load("testdata/test.mkv"); err != nil {
+		t.Fatal(err)
+	}
+	for v.mu.Lock(); v.busy; v.mu.Lock() { // the first frame landing
+		v.mu.Unlock()
+		time.Sleep(time.Millisecond)
+	}
+	v.mu.Unlock()
+	if names, playing := v.AudioTracks(); names != nil && (!slices.Equal(names, []string{"eng (aac mono)", "swe (ac3 mono)"}) || playing != 0) {
+		t.Errorf("audio %q, playing %d", names, playing)
+	}
+	if names, showing := v.Subtitles(); !slices.Equal(names, []string{"eng", "swe - Styled"}) || showing != 0 {
+		t.Fatalf("subtitles %q, showing %d", names, showing)
+	}
+
+	changed := 0
+	v.OnChanged = func() { changed++ } // the test driver runs fyne.Do where it is called
+	v.ShowSubtitles(1)
+	if _, showing := v.Subtitles(); showing != 1 || changed == 0 {
+		t.Errorf("showing subtitles %d, OnChanged called %d times", showing, changed)
+	}
+	v.SetRotation(90)
+	v.mu.Lock()
+	turned := v.screen.Rotation
+	v.mu.Unlock()
+	if turned != 90 || v.Rotation() != 90 {
+		t.Errorf("rotating clockwise shows the picture at %d°, Rotation says %d°", turned, v.Rotation())
 	}
 }

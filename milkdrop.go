@@ -37,7 +37,7 @@ type milkdrop struct {
 	share *share // where frames go on the painter's GPU, nil to read them back
 }
 
-// ponytail: one GL context per process, a second Player's visualizer fails;
+// ponytail: one GL context per process, a second Video's visualizer fails;
 // keep the context per milkdrop if two have to show at once.
 func newMilkdrop(w, h int) (*milkdrop, error) {
 	sh := newShare()

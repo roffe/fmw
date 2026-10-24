@@ -30,7 +30,7 @@ type Visualization struct {
 	Off bool
 
 	// Width and Height are the size presets are drawn at, which is scaled
-	// to cover the player, cut at the sides or the top and bottom where its
+	// to cover the video, cut at the sides or the top and bottom where its
 	// shape differs. Changing it starts the preset over.
 	Width, Height int
 
@@ -179,7 +179,7 @@ func (v *visualizer) show(music bool) {
 	showIf(v.frame, music && shared)
 	if music {
 		// ponytail: the thread lives as long as the process and keeps its
-		// Player; stop it from a Player.Close if players come and go
+		// Video; stop it from a Video.Close if videos come and go
 		v.once.Do(func() { go v.run() })
 		select {
 		case v.wake <- struct{}{}:

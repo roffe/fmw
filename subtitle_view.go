@@ -17,7 +17,7 @@ import (
 // not stretched over the picture: a film cropped to 2.39:1 keeps the 16:9
 // subtitles of its disc, which would otherwise come out wide.
 type subtitleLayout struct {
-	p      *Player
+	v      *Video
 	box    *canvas.Rectangle
 	lines  []*canvas.Text
 	images []*canvas.Image
@@ -29,14 +29,14 @@ func (l *subtitleLayout) MinSize([]fyne.CanvasObject) fyne.Size {
 }
 
 func (l *subtitleLayout) Layout(_ []fyne.CanvasObject, size fyne.Size) {
-	pos, area := l.p.pictureArea(size)
+	pos, area := l.v.pictureArea(size)
 	for i, img := range l.images {
 		e := l.events[i]
 		at, frame, cw, ch := pos, area, e.cw, e.ch
 		if cw > 0 && ch > 0 {
 			at, frame = fit(size, float32(cw)/float32(ch))
 		} else {
-			cw, ch = l.p.screen.Width, l.p.screen.Height
+			cw, ch = l.v.screen.Width, l.v.screen.Height
 		}
 		if cw == 0 || ch == 0 {
 			continue
@@ -80,12 +80,12 @@ func (l *subtitleLayout) Layout(_ []fyne.CanvasObject, size fyne.Size) {
 }
 
 // pictureArea is where the picture shows on a screen of size, as it fits it.
-func (p *Player) pictureArea(size fyne.Size) (fyne.Position, fyne.Size) {
-	a := p.screen.Aspect
-	if a <= 0 && p.screen.Height > 0 {
-		a = float32(p.screen.Width) / float32(p.screen.Height)
+func (v *Video) pictureArea(size fyne.Size) (fyne.Position, fyne.Size) {
+	a := v.screen.Aspect
+	if a <= 0 && v.screen.Height > 0 {
+		a = float32(v.screen.Width) / float32(v.screen.Height)
 	}
-	if p.screen.Rotation%180 != 0 && a > 0 {
+	if v.screen.Rotation%180 != 0 && a > 0 {
 		a = 1 / a
 	}
 	return fit(size, a)
@@ -106,22 +106,22 @@ func fit(size fyne.Size, aspect float32) (fyne.Position, fyne.Size) {
 
 // updateSubtitles puts the events showing at now over the picture when they
 // changed, or lays them out again when the picture did. Called by publish.
-func (p *Player) updateSubtitles(now float64) {
+func (v *Video) updateSubtitles(now float64) {
 	var on []*subEvent
-	if p.s != nil {
-		on = p.s.m.subtitlesAt(now)
+	if v.s != nil {
+		on = v.s.m.subtitlesAt(now)
 	}
-	geometry := [4]float32{float32(p.screen.Width), float32(p.screen.Height), p.screen.Aspect, float32(p.screen.Rotation)}
-	if slices.Equal(on, p.shownSubs) {
-		if geometry != p.shownGeometry {
-			p.shownGeometry = geometry
-			p.subLayout.Layout(nil, p.subs.Size())
+	geometry := [4]float32{float32(v.screen.Width), float32(v.screen.Height), v.screen.Aspect, float32(v.screen.Rotation)}
+	if slices.Equal(on, v.shownSubs) {
+		if geometry != v.shownGeometry {
+			v.shownGeometry = geometry
+			v.subLayout.Layout(nil, v.subs.Size())
 		}
 		return
 	}
-	p.shownSubs, p.shownGeometry = on, geometry
+	v.shownSubs, v.shownGeometry = on, geometry
 
-	l := p.subLayout
+	l := v.subLayout
 	l.lines, l.images, l.events = nil, nil, nil
 	objects := []fyne.CanvasObject{l.box}
 	for _, e := range on {
@@ -139,8 +139,8 @@ func (p *Player) updateSubtitles(now float64) {
 			objects = append(objects, t)
 		}
 	}
-	p.subs.Objects = objects
-	p.subs.Refresh()
+	v.subs.Objects = objects
+	v.subs.Refresh()
 }
 
 // sidecars returns the subtitle files next to the video at path, or in a Subs

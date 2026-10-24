@@ -18,7 +18,6 @@ import (
 	"fyne.io/fyne/v2/driver/desktop"
 	"fyne.io/fyne/v2/widget"
 	"github.com/roffe/browse"
-	"github.com/roffe/fmw"
 	"github.com/roffe/mdi3"
 )
 
@@ -44,25 +43,25 @@ func main() {
 	prefs := a.Preferences()
 	w := a.NewWindow("fmw")
 	w.SetMaster()
-	p := fmw.NewPlayer()
-	p.SetVolume(prefs.FloatWithFallback("volume", 1))
-	a.Lifecycle().SetOnStopped(func() { prefs.SetFloat("volume", p.Volume()) })
-	set := &settings{prefs: prefs, p: p, main: w}
+	p := newPlayer()
+	p.video.SetVolume(prefs.FloatWithFallback("volume", 1))
+	a.Lifecycle().SetOnStopped(func() { prefs.SetFloat("volume", p.video.Volume()) })
+	set := &settings{prefs: prefs, video: p.video, main: w}
 	set.apply()
 	// a stream's server can take its time, which the window does not wait for
 	load := func(e entry, done func(error)) {
-		p.Open(e.Path, func(err error) {
+		p.video.Open(e.Path, func(err error) {
 			if err == nil {
 				w.SetTitle(title(e))
-				p.Play()
+				p.video.Play()
 			}
 			done(err)
 		})
 	}
 	pl := newPlaylist(a, w, load)
-	p.OnEnded = pl.ended
-	p.OnEmpty = pl.next // a fresh start plays the first entry
-	pl.skip = p.SetSkip
+	p.video.OnEnded = pl.ended
+	p.video.OnEmpty = pl.next // a fresh start plays the first entry
+	pl.skip = p.setSkip
 
 	recent := fyne.NewMenuItem("Open Recent", nil)
 	recent.ChildMenu = fyne.NewMenu("")
@@ -107,7 +106,7 @@ func main() {
 	openURL := fyne.NewMenuItem("Open URL…", func() { askURL(a, w, play) })
 	openSubs := fyne.NewMenuItem("Open Subtitles…", func() {
 		openFile(w, "Open subtitles", subtitles, func(path string) {
-			if err := p.AddSubtitles(path); err != nil {
+			if err := p.video.AddSubtitles(path); err != nil {
 				dialog.ShowError(err, w)
 			}
 		})
@@ -130,21 +129,21 @@ func main() {
 	w.SetMainMenu(mainMenu)
 	for _, enter := range []fyne.KeyName{fyne.KeyReturn, fyne.KeyEnter} { // Enter is the keypad's
 		w.Canvas().AddShortcut(&desktop.CustomShortcut{KeyName: enter, Modifier: fyne.KeyModifierAlt}, func(fyne.Shortcut) {
-			p.ToggleFullScreen()
+			p.toggleFullScreen()
 		})
 	}
 	w.Canvas().SetOnTypedKey(func(e *fyne.KeyEvent) {
 		switch e.Name {
 		case fyne.KeyEscape:
 			if w.FullScreen() {
-				p.ToggleFullScreen()
+				p.toggleFullScreen()
 			}
 		case fyne.KeySpace:
-			p.TogglePlay()
+			p.video.TogglePlay()
 		case fyne.KeyLeft:
-			p.Seek(p.CurrentTime() - 5*time.Second)
+			p.video.Seek(p.video.CurrentTime() - 5*time.Second)
 		case fyne.KeyRight:
-			p.Seek(p.CurrentTime() + 5*time.Second)
+			p.video.Seek(p.video.CurrentTime() + 5*time.Second)
 		case fyne.KeyN:
 			pl.next()
 		case fyne.KeyP:
@@ -165,7 +164,7 @@ func main() {
 		files, subs := sortDrop(pathsOf(uris))
 		openAll(files)
 		for _, sub := range subs {
-			if err := p.AddSubtitles(sub); err != nil {
+			if err := p.video.AddSubtitles(sub); err != nil {
 				dialog.ShowError(err, w)
 			}
 		}

@@ -26,7 +26,7 @@ type share struct {
 	mu      sync.Mutex
 	slots   []*slot
 	retired []*slot // of an earlier size, freed once nothing reads them
-	shown   *slot   // the player's, which the painter copies from as it draws
+	shown   *slot   // the video's, which the painter copies from as it draws
 	next    int
 
 	// Only the visualizer's thread uses these.

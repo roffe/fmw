@@ -2,7 +2,7 @@
 
 # fmw
 
-A video player widget for [Fyne](https://fyne.io), and a small player app built on it.
+A video widget for [Fyne](https://fyne.io), and a small player app built on it to show it off.
 
 It plays whatever FFmpeg can open, decodes on the GPU when there is one, and on Linux the frames never leave the GPU. 8K60 HEVC 10-bit plays at 4% of one CPU core :)
 
@@ -22,7 +22,7 @@ It plays whatever FFmpeg can open, decodes on the GPU when there is one, and on 
 
 ## Controls
 
-The widget handles the mouse by itself:
+The app's player handles the mouse (see [cmd/fmw/player.go](cmd/fmw/player.go)), the widget itself takes no input:
 
 | | |
 |---|---|
@@ -30,7 +30,7 @@ The widget handles the mouse by itself:
 | Mouse wheel | volume, 2% a notch |
 | Right click | menu: play/pause, stop, full screen, rotate, audio track, subtitles, next visualization |
 
-Keys are up to the app, the fmw app sets these up (see [cmd/fmw/main.go](cmd/fmw/main.go)):
+Keys are set up in [cmd/fmw/main.go](cmd/fmw/main.go):
 
 | | |
 |---|---|
@@ -53,40 +53,57 @@ Builds are on the [releases](https://github.com/roffe/fmw/releases) page: an App
 
 ## Using the widget
 
+`fmw.Video` is just the picture: the video, its subtitles and the visualization for music. No controls and no mouse handling, so you put your own around it or on top of it.
+
 ```go
 package main
 
 import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
+	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/theme"
+	"fyne.io/fyne/v2/widget"
 	"github.com/roffe/fmw"
 )
 
 func main() {
 	a := app.NewWithID("com.example.player")
 	w := a.NewWindow("Player")
-	p := fmw.NewPlayer()
-	w.SetContent(p)
+	v := fmw.NewVideo()
+	play := widget.NewButtonWithIcon("", theme.MediaPlayIcon(), v.TogglePlay)
+	v.OnChanged = func() { // on the main goroutine, every frame while it plays
+		if v.Playing() {
+			play.SetIcon(theme.MediaPauseIcon())
+		} else {
+			play.SetIcon(theme.MediaPlayIcon())
+		}
+	}
+	w.SetContent(container.NewStack(v, container.NewVBox(play))) // the button over the picture
 	w.Resize(fyne.NewSize(960, 600))
 
 	// Load once the window shows, that's when the GPU device the decoder
 	// shares with the painter gets made. Loaded before that it still plays,
 	// just with the frames going through RAM.
 	a.Lifecycle().SetOnStarted(func() {
-		if err := p.Load("movie.mkv"); err != nil {
+		if err := v.Load("movie.mkv"); err != nil {
 			panic(err)
 		}
-		p.Play()
+		v.Play()
 	})
 	w.ShowAndRun()
 }
 ```
 
-The rest is what you'd expect: `Play`, `Pause`, `TogglePlay`, `Stop`, `Seek`, `CurrentTime`, `Duration`, `Playing`, `SetVolume`, `Volume`, `AddSubtitles` and `ToggleFullScreen`. All of them are safe to call from any goroutine. `OnEnded` gets called when what's loaded has played to the end, that's how the app's playlist moves on.
+The rest is what you'd expect: `Play`, `Pause`, `TogglePlay`, `Stop`, `Seek`, `CurrentTime`, `Duration`, `Playing`, `Live`, `Music`, `SetVolume`, `Volume` and `AddSubtitles`. For menus there's `AudioTracks`/`SetAudioTrack`, `Subtitles`/`ShowSubtitles`, `Rotation`/`SetRotation` and `ShowsVisualization`/`NextVisualization`. All of them are safe to call from any goroutine.
+
+`OnChanged` gets called on the main goroutine whenever what shows changes: a new frame, play or pause, a seek, a load, the volume. Update your controls from it. `OnEnded` gets called when what's loaded has played to the end, that's how the app's playlist moves on, and `OnEmpty` when `Play` is asked with nothing loaded.
 
 `Load` waits until the file or stream is open. `Open` does the same in the background and calls back on the main goroutine, which is what an app wants for URLs, a server can take its time. The last `Load` or `Open` wins: a newer one interrupts one still connecting.
 
 `SetHardwareDecoding` and `SetVisualization` take what the settings window sets, `HardwareDecoders` lists the kinds of device FFmpeg can decode on and `HasVisualizations` says if fmw was built with projectM.
+
+The whole player with the control bar, full screen, the hiding controls and the right click menu is [cmd/fmw/player.go](cmd/fmw/player.go), under 400 lines on top of `Video`. Copy it if you want a starting point.
 
 ## Building
 

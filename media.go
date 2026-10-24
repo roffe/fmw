@@ -227,7 +227,7 @@ type media struct {
 	audios []C.int       // the streams audio can play from
 	sws    *C.SwsContext // for frames in formats painters do not draw
 	swr    *C.SwrContext
-	hwdec  string // the kind of device video decodes on, see Player.SetHardwareDecoding
+	hwdec  string // the kind of device video decodes on, see Video.SetHardwareDecoding
 	pcm    []byte
 	start  float64 // stream time where playback time is zero
 	dur    float64

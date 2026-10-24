@@ -11,7 +11,7 @@ import (
 func TestPlaylistPlaysThrough(t *testing.T) {
 	a := test.NewApp()
 	defer a.Quit()
-	p := fmw.NewPlayer()
+	p := fmw.NewVideo()
 	p.SetVolume(0)
 	w := test.NewWindow(p)
 	defer w.Close()
