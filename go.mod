@@ -51,3 +51,5 @@ require (
 )
 
 replace fyne.io/fyne/v2 => github.com/roffe/fyne/v2 v2.0.0-20261024160315-19f820953b1a
+
+replace github.com/go-gl/glfw/v3.4/glfw => github.com/roffe/glfw/v3.4/glfw v0.1.0-pre.2.0.20261021211529-a7e7690b3fbc
