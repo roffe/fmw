@@ -75,6 +75,7 @@ func main() {
 		recent.Disabled = len(paths) == 0
 	}
 	remember := func(path string) {
+		keepContent(path)
 		paths := addRecent(prefs.StringList("recent"), path)
 		prefs.SetStringList("recent", paths)
 		listRecent(paths)
@@ -313,6 +314,9 @@ func askURL(a fyne.App, w fyne.Window, open func(string)) {
 func recentName(path string) string {
 	if !isURL(path) {
 		return filepath.Base(path)
+	}
+	if name := contentName(path); name != "" {
+		return name
 	}
 	name := []rune(path[strings.Index(path, "://")+3:])
 	if len(name) > 60 {

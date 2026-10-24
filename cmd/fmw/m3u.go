@@ -29,6 +29,9 @@ func (e entry) name() string {
 	if e.Title != "" {
 		return e.Title
 	}
+	if name := contentName(e.Path); name != "" {
+		return strings.TrimSuffix(name, filepath.Ext(name))
+	}
 	if isURL(e.Path) {
 		return e.Path
 	}
