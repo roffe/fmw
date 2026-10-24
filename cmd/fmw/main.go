@@ -135,6 +135,10 @@ func main() {
 	}
 	w.Canvas().SetOnTypedKey(func(e *fyne.KeyEvent) {
 		switch e.Name {
+		case fyne.KeyEscape:
+			if w.FullScreen() {
+				p.ToggleFullScreen()
+			}
 		case fyne.KeySpace:
 			p.TogglePlay()
 		case fyne.KeyLeft:
