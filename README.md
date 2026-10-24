@@ -95,7 +95,7 @@ func main() {
 }
 ```
 
-The rest is what you'd expect: `Play`, `Pause`, `TogglePlay`, `Stop`, `Seek`, `CurrentTime`, `Duration`, `Playing`, `Live`, `Music`, `SetVolume`, `Volume` and `AddSubtitles`. For menus there's `AudioTracks`/`SetAudioTrack`, `Subtitles`/`ShowSubtitles`, `Rotation`/`SetRotation` and `ShowsVisualization`/`NextVisualization`. All of them are safe to call from any goroutine.
+The rest is what you'd expect: `Play`, `Pause`, `TogglePlay`, `Stop`, `Seek`, `CurrentTime`, `Duration`, `Playing`, `Paused`, `Live`, `Music`, `SetVolume`, `Volume` and `AddSubtitles`. For menus there's `AudioTracks`/`SetAudioTrack`, `Subtitles`/`ShowSubtitles`, `Rotation`/`SetRotation` and `ShowsVisualization`/`NextVisualization`. All of them are safe to call from any goroutine.
 
 `OnChanged` gets called on the main goroutine whenever what shows changes: a new frame, play or pause, a seek, a load, the volume. Update your controls from it. `OnEnded` gets called when what's loaded has played to the end, that's how the app's playlist moves on, and `OnEmpty` when `Play` is asked with nothing loaded.
 

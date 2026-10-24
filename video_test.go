@@ -337,3 +337,30 @@ func TestTracks(t *testing.T) {
 		t.Errorf("rotating clockwise shows the picture at %d°, Rotation says %d°", turned, v.Rotation())
 	}
 }
+
+func TestPaused(t *testing.T) {
+	test.NewTempApp(t)
+	v := NewVideo()
+	v.SetVolume(0)
+	if err := v.Load("testdata/test.mp4"); err != nil {
+		t.Fatal(err)
+	}
+	for _, step := range []struct {
+		name   string
+		do     func()
+		paused bool
+	}{
+		{"loaded", func() {}, false},
+		{"playing", v.Play, false},
+		{"paused", v.Pause, true},
+		{"paused twice", v.Pause, true},
+		{"playing again", v.Play, false},
+		{"stopped", func() { v.Pause(); v.Stop() }, false},
+		{"stopped, paused", v.Pause, false}, // nothing played to hold
+	} {
+		step.do()
+		if v.Paused() != step.paused {
+			t.Errorf("%s: Paused %v", step.name, !step.paused)
+		}
+	}
+}

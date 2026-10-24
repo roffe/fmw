@@ -55,6 +55,7 @@ type Video struct {
 	mu      sync.Mutex
 	s       *stream
 	playing bool
+	paused  bool    // held by Pause, rather than stopped, ended or never played
 	seekTo  float64 // where a seek that has not landed yet goes, or -1
 	busy    bool    // the work goroutine runs
 	pos     float64 // the playback clock as of at
@@ -189,6 +190,7 @@ func (v *Video) load(path string, gen uint64) error {
 		return errReplaced
 	}
 	paused := v.pause()
+	v.paused = false
 	old := v.s
 	v.s = s
 	if s.out != nil {
@@ -224,7 +226,7 @@ func (v *Video) Play() {
 	if s.videoEOF && (s.out == nil || s.audioEOF.Load()) {
 		v.seekTo = 0
 	}
-	v.playing, v.at = true, time.Now()
+	v.playing, v.paused, v.at = true, false, time.Now()
 	if s.out != nil && v.seekTo < 0 {
 		s.out.Play() // a seek starts it when it lands
 	}
@@ -237,6 +239,7 @@ func (v *Video) Play() {
 func (v *Video) Pause() {
 	v.mu.Lock()
 	paused := v.pause()
+	v.paused = v.paused || paused
 	v.mu.Unlock()
 	if paused {
 		fyne.Do(v.publish)
@@ -279,7 +282,10 @@ func (v *Video) end(s *stream) {
 
 // Stop ends playback and goes back to the start.
 func (v *Video) Stop() {
-	v.Pause()
+	v.mu.Lock()
+	v.pause()
+	v.paused = false
+	v.mu.Unlock()
 	v.Seek(0)
 }
 
@@ -446,6 +452,14 @@ func (v *Video) Playing() bool {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	return v.playing
+}
+
+// Paused reports whether Pause holds playback where it was, to go on from
+// there. Stopped, ended, just loaded or empty is not paused.
+func (v *Video) Paused() bool {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return v.paused
 }
 
 // Music reports whether what is loaded is sound without a picture of its own,
