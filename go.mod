@@ -6,7 +6,7 @@ require (
 	fyne.io/fyne/v2 v2.8.2
 	github.com/ebitengine/oto/v3 v3.5.1
 	github.com/roffe/browse v0.0.0-20261004104941-eb6d091b1974
-	github.com/roffe/gowgpu v0.0.0-20261024095757-0343737dd5f7
+	github.com/roffe/gowgpu v0.0.0-20261025002959-d40ab1edaf2b
 	github.com/roffe/mdi3 v0.0.0-20261017000628-abdda3baa3d7
 	golang.org/x/text v0.22.0
 )
@@ -50,6 +50,6 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
-replace fyne.io/fyne/v2 => github.com/roffe/fyne/v2 v2.0.0-20261024160315-19f820953b1a
+replace fyne.io/fyne/v2 => github.com/roffe/fyne/v2 v2.0.0-20261025003213-15a4e3949e5e
 
 replace github.com/go-gl/glfw/v3.4/glfw => github.com/roffe/glfw/v3.4/glfw v0.1.0-pre.2.0.20261021211529-a7e7690b3fbc
